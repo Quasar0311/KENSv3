@@ -1,3 +1,0 @@
-/Users/quasar/Desktop/KENSv3/build/_deps/kens_solution-subbuild/CMakeFiles/rebuild_cache.dir
-/Users/quasar/Desktop/KENSv3/build/_deps/kens_solution-subbuild/CMakeFiles/edit_cache.dir
-/Users/quasar/Desktop/KENSv3/build/_deps/kens_solution-subbuild/CMakeFiles/kens_solution-populate.dir

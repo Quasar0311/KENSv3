@@ -1,1 +1,0 @@
-/usr/bin/clang++ -g -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX10.15.sdk -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/kens-part4-run-solution.dir/testcongestion.cpp.o -o kens-part4-run-solution  libkens.a ../../_deps/kens_solution-src/libkens_solution.a ../../libe.a ../../lib/libgtest_maind.a ../../lib/libgtestd.a 

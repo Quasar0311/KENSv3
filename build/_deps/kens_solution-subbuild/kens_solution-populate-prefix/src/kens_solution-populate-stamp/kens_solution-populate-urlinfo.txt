@@ -1,3 +1,0 @@
-repository='external project URL'
-module='https://anlab-kaist.github.io/KENSv3/solution/kens_solution-universal-Darwin-AppleClang.zip'
-tag=''
