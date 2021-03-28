@@ -1,0 +1,2 @@
+/usr/bin/ar qc libkens.a CMakeFiles/kens.dir/TCPAssignment.cpp.o
+/usr/bin/ranlib libkens.a
