@@ -33,13 +33,25 @@ void TCPAssignment::initialize()
 void TCPAssignment::finalize() {}
 
 Socket *TCPAssignment::getSocket(int pid, int fd) {
-  std::vector <Socket *>::iterator it = socketList.begin();
-  for (it; it != socketList.end(); it++) {
+  std::vector <Socket *>::iterator it;
+  for (it = socketList.begin(); it != socketList.end(); it++) {
     if ((*it) -> pid == pid && (*it) -> fd == fd) {
       return (*it);
     }
   }
   return NULL;
+}
+
+void TCPAssignment::eraseInsocketList(Socket *sock) {
+  std::vector <Socket *>::iterator it;
+  for (it = socketList.begin(); it != socketList.end();) {
+    if ((*it) == sock) {
+      it = socketList.erase(it);
+    }
+    else {
+      ++it;
+    }
+  }
 }
 
 void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
@@ -119,10 +131,17 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int t
   returnSystemCall (syscallUUID, fd);
 }
 
-void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1) 
-{  
-  this -> removeFileDescriptor(pid, param1);
-  this -> returnSystemCall(syscallUUID, 1);
+void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd) 
+{
+  Socket *sock = getSocket(pid, fd);
+  if (sock == NULL) {
+    returnSystemCall(syscallUUID, -1);
+    return;
+  }
+
+  eraseInsocketList(sock);
+  removeFileDescriptor(pid, fd);
+  returnSystemCall(syscallUUID, 1);
 }
 
 void TCPAssignment::syscall_read(UUID syscllUUID, int pid, 
