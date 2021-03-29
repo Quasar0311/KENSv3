@@ -49,6 +49,8 @@ public:
   virtual void finalize();
   virtual ~TCPAssignment();
 
+  Socket *getSocket(int pid, int fd);
+
   void syscall_socket(UUID syscallUUID, int pid, int param1, int param2, int param3);
   void syscall_close(UUID syscallUUID, int pid, int param1);
   void syscall_read(UUID syscallUUID, int pid, int param1, void *param2, int param3);

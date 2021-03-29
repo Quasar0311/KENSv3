@@ -32,6 +32,16 @@ void TCPAssignment::initialize()
 
 void TCPAssignment::finalize() {}
 
+Socket *TCPAssignment::getSocket(int pid, int fd) {
+  std::vector <Socket *>::iterator it = socketList.begin();
+  for (it; it != socketList.end(); it++) {
+    if ((*it) -> pid == pid && (*it) -> fd == fd) {
+      return (*it);
+    }
+  }
+  return NULL;
+}
+
 void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
                                    const SystemCallParameter &param) {
 
@@ -103,6 +113,8 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int t
   newSocket->domain = domain;
   newSocket->type = type;
   newSocket->protocol = protocol;
+
+  socketList.push_back(newSocket);
 
   returnSystemCall (syscallUUID, fd);
 }
