@@ -128,7 +128,7 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int t
 
   socketList.push_back(newSocket);
 
-  returnSystemCall (syscallUUID, fd);
+  this -> returnSystemCall (syscallUUID, fd);
 }
 
 void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd) 
@@ -141,7 +141,7 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int fd)
 
   eraseInsocketList(sock);
   removeFileDescriptor(pid, fd);
-  returnSystemCall(syscallUUID, 1);
+  this -> returnSystemCall(syscallUUID, 1);
 }
 
 void TCPAssignment::syscall_read(UUID syscllUUID, int pid, 
@@ -177,7 +177,10 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid,
 void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
     		                         struct sockaddr *addr, socklen_t addrlen)
 {
-
+  // The only value you should assign to sin_family is AF_INET.  
+  // The two fields, sin_port and sin_addr, must follow the network byte order. 
+  // The sin_addr field must be either an IP address or INADDR_ANY. 
+  // You should implement both cases.
 }
 
 void TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int param1,
