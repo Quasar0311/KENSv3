@@ -17,6 +17,19 @@
 
 #include <E/E_TimerModule.hpp>
 
+#include <E/E_Common.hpp>
+
+struct Socket
+{
+  UUID socketUUID;
+  int fd;
+  int pid;
+  int domain;       /* AF_INET */
+  int type;         /* SOCK_STREAM */
+  int protocol;     /* PROTOCOLS */
+  int connected;
+};
+
 namespace E {
 
 class TCPAssignment : public HostModule,
@@ -38,6 +51,10 @@ protected:
   virtual void systemCallback(UUID syscallUUID, int pid,
                               const SystemCallParameter &param) final;
   virtual void packetArrived(std::string fromModule, Packet &&packet) final;
+
+  virtual void syscall_socket (UUID syscallUUID, int pid,
+                               int domain, int type, int protocol);
+  std::vector <Socket *> socketList;
 };
 
 class TCPAssignmentProvider {

@@ -13,6 +13,8 @@
 #include <E/Networking/E_Packet.hpp>
 #include <cerrno>
 
+#include <E/Networking/E_Host.hpp>
+
 namespace E {
 
 TCPAssignment::TCPAssignment(Host *host)
@@ -23,7 +25,10 @@ TCPAssignment::TCPAssignment(Host *host)
 
 TCPAssignment::~TCPAssignment() {}
 
-void TCPAssignment::initialize() {}
+void TCPAssignment::initialize()
+{
+  socketList = std::vector <Socket *>();
+}
 
 void TCPAssignment::finalize() {}
 
@@ -36,8 +41,8 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
 
   switch (param.syscallNumber) {
   case SOCKET:
-    // this->syscall_socket(syscallUUID, pid, param.param1_int,
-    // param.param2_int, param.param3_int);
+    this->syscall_socket(syscallUUID, pid, param.param1_int,
+    param.param2_int, param.param3_int);
     break;
   case CLOSE:
     // this->syscall_close(syscallUUID, pid, param.param1_int);
@@ -93,6 +98,24 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
 void TCPAssignment::timerCallback(std::any payload) {
   // Remove below
   (void)payload;
+}
+
+void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int type, int protocol)
+{
+  int fd;
+  if ((fd = createFileDescriptor (pid)) == -1)
+  {
+    returnSystemCall (syscallUUID, -1);
+  }
+  Socket *newSocket = new Socket;
+  newSocket->socketUUID = syscallUUID;
+  newSocket->fd = fd;
+  newSocket->pid = pid;
+  newSocket->domain = domain;
+  newSocket->type = type;
+  newSocket->protocol = protocol;
+
+  returnSystemCall (syscallUUID, fd);
 }
 
 } // namespace E
