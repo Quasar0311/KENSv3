@@ -34,6 +34,8 @@ public:
   virtual void finalize();
   virtual ~TCPAssignment();
 
+  int TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int param1, int param2, int param3);
+
 protected:
   virtual void systemCallback(UUID syscallUUID, int pid,
                               const SystemCallParameter &param) final;
