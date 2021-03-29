@@ -13,6 +13,8 @@
 #include <E/Networking/E_Packet.hpp>
 #include <cerrno>
 
+#include <E/Networking/E_Host.hpp>
+
 namespace E {
 
 TCPAssignment::TCPAssignment(Host *host)
@@ -23,7 +25,10 @@ TCPAssignment::TCPAssignment(Host *host)
 
 TCPAssignment::~TCPAssignment() {}
 
-void TCPAssignment::initialize() {}
+void TCPAssignment::initialize()
+{
+  socketList = std::vector <Socket *>();
+}
 
 void TCPAssignment::finalize() {}
 
@@ -156,6 +161,24 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
 void TCPAssignment::timerCallback(std::any payload) {
   // Remove below
   (void)payload;
+}
+
+void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int type, int protocol)
+{
+  int fd;
+  if ((fd = createFileDescriptor (pid)) == -1)
+  {
+    returnSystemCall (syscallUUID, -1);
+  }
+  Socket *newSocket = new Socket;
+  newSocket->socketUUID = syscallUUID;
+  newSocket->fd = fd;
+  newSocket->pid = pid;
+  newSocket->domain = domain;
+  newSocket->type = type;
+  newSocket->protocol = protocol;
+
+  returnSystemCall (syscallUUID, fd);
 }
 
 } // namespace E
