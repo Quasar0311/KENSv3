@@ -89,19 +89,28 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
   }
 }
 
-int TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int param1, int param2, int param3) 
+void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int type, int protocol)
 {
-  int socket_fd;
-  socket_fd = this -> createFileDescriptor(pid);
-  this -> returnSystemCall(syscallUUID, socket_fd);
-  return 0;
+  int fd;
+  if ((fd = createFileDescriptor (pid)) == -1)
+  {
+    returnSystemCall (syscallUUID, -1);
+  }
+  Socket *newSocket = new Socket;
+  newSocket->socketUUID = syscallUUID;
+  newSocket->fd = fd;
+  newSocket->pid = pid;
+  newSocket->domain = domain;
+  newSocket->type = type;
+  newSocket->protocol = protocol;
+
+  returnSystemCall (syscallUUID, fd);
 }
 
-int TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1) 
+void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1) 
 {  
   this -> removeFileDescriptor(pid, param1);
   this -> returnSystemCall(syscallUUID, 1);
-  return 0;
 }
 
 void TCPAssignment::syscall_read(UUID syscllUUID, int pid, 
@@ -163,22 +172,6 @@ void TCPAssignment::timerCallback(std::any payload) {
   (void)payload;
 }
 
-void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int type, int protocol)
-{
-  int fd;
-  if ((fd = createFileDescriptor (pid)) == -1)
-  {
-    returnSystemCall (syscallUUID, -1);
-  }
-  Socket *newSocket = new Socket;
-  newSocket->socketUUID = syscallUUID;
-  newSocket->fd = fd;
-  newSocket->pid = pid;
-  newSocket->domain = domain;
-  newSocket->type = type;
-  newSocket->protocol = protocol;
 
-  returnSystemCall (syscallUUID, fd);
-}
 
 } // namespace E

@@ -19,6 +19,10 @@
 
 #include <E/E_Common.hpp>
 
+
+
+namespace E {
+
 struct Socket
 {
   UUID socketUUID;
@@ -29,8 +33,6 @@ struct Socket
   int protocol;     /* PROTOCOLS */
   int connected;
 };
-
-namespace E {
 
 class TCPAssignment : public HostModule,
                       public NetworkModule,
@@ -47,8 +49,8 @@ public:
   virtual void finalize();
   virtual ~TCPAssignment();
 
-  int syscall_socket(UUID syscallUUID, int pid, int param1, int param2, int param3);
-  int syscall_close(UUID syscallUUID, int pid, int param1);
+  void syscall_socket(UUID syscallUUID, int pid, int param1, int param2, int param3);
+  void syscall_close(UUID syscallUUID, int pid, int param1);
   void syscall_read(UUID syscallUUID, int pid, int param1, void *param2, int param3);
   void syscall_write(UUID syscallUUID, int pid, int param1, void *param2, int param3);
   void syscall_connect(UUID syscallUUID, int pid, int param1, 
@@ -73,8 +75,8 @@ protected:
                               const SystemCallParameter &param) final;
   virtual void packetArrived(std::string fromModule, Packet &&packet) final;
 
-  virtual void syscall_socket (UUID syscallUUID, int pid,
-                               int domain, int type, int protocol);
+  // virtual void syscall_socket (UUID syscallUUID, int pid,
+  //                              int domain, int type, int protocol);
   std::vector <Socket *> socketList;
 };
 
