@@ -19,16 +19,29 @@
 
 #include <E/E_Common.hpp>
 
+#define MAX_SOCKETS 1 << 16
+
 struct Socket
 {
   UUID socketUUID;
+  socket_state state;
   int fd;
   int pid;
   int domain;       /* AF_INET */
-  int type;         /* SOCK_STREAM */
+  short type;         /* SOCK_STREAM */
   int protocol;     /* PROTOCOLS */
   int connected;
+  struct sockaddr saddr;
 };
+
+typedef enum
+{
+  SS_FREE = 0,
+  SS_UNCONNECTED,
+  SS_CONNECTING,
+  SS_CONNECTED,
+  SS_DISCONNECTING
+} socket_state;
 
 namespace E {
 
@@ -52,9 +65,17 @@ protected:
                               const SystemCallParameter &param) final;
   virtual void packetArrived(std::string fromModule, Packet &&packet) final;
 
-  virtual void syscall_socket (UUID syscallUUID, int pid,
-                               int domain, int type, int protocol);
-  std::vector <Socket *> socketList;
+  virtual int syscall_socket (UUID syscallUUID, int pid,
+                              int domain, int type, int protocol);
+  virtual int syscall_bind (UUID syscallUUID, int pid,
+                                           int socket, struct sockaddr *address,
+                                           socklen_t address_len);
+  virtual int syscall_getsockname (UUID syscallUUID, int pid,
+                                   int sockfd, struct sockaddr *address,
+                                   socklen_t *address_len);
+  virtual struct Socket * SockfdLookup (int fd);
+
+  std::array <struct Socket *, MAX_SOCKETS> sockList;
 };
 
 class TCPAssignmentProvider {
