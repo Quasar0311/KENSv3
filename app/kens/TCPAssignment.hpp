@@ -23,6 +23,12 @@
 
 namespace E {
 
+struct Sockad_in {
+  sa_family_t    sin_family; /* address family: AF_INET */
+  in_port_t      sin_port;   /* port in network byte order */
+  uint32_t sin_addr;   /* internet address */
+};
+
 struct Socket
 {
   UUID socketUUID;
@@ -32,6 +38,8 @@ struct Socket
   int type;         /* SOCK_STREAM */
   int protocol;     /* PROTOCOLS */
   int connected;
+
+  struct Sockad_in *addr_in;
 };
 
 class TCPAssignment : public HostModule,

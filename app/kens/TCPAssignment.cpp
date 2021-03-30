@@ -125,6 +125,7 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int t
   newSocket->domain = domain;
   newSocket->type = type;
   newSocket->protocol = protocol;
+  newSocket->addr_in = NULL;
 
   socketList.push_back(newSocket);
 
@@ -181,6 +182,25 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
   // The two fields, sin_port and sin_addr, must follow the network byte order. 
   // The sin_addr field must be either an IP address or INADDR_ANY. 
   // You should implement both cases.
+  Socket *sock = getSocket(pid, sockfd);
+  Sockad_in *address_in = new Sockad_in;
+
+  if (sock == NULL) {
+    this -> returnSystemCall(syscallUUID, -1);
+  }
+
+  if (sock -> addr_in != NULL) {
+    this -> returnSystemCall(syscallUUID, -1);
+    return;
+  }
+
+  address_in -> sin_family = AF_INET;
+  address_in -> sin_port = ntohs(((sockaddr_in *) &addr) -> sin_port);
+  address_in -> sin_addr = ntohl(((sockaddr_in *) &addr) -> sin_addr.s_addr);
+  
+  sock -> addr_in = address_in;
+
+  this -> returnSystemCall(syscallUUID, 0);
 }
 
 void TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int param1,
