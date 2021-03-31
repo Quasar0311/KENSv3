@@ -29,9 +29,20 @@ struct Sockad_in {
   uint32_t sin_addr;   /* internet address */
 };
 
+typedef enum
+{
+  SS_FREE = 0,
+  SS_UNCONNECTED,
+  SS_BIND,
+  SS_LISTEN,
+  SS_CONNECTED,
+  SS_DISCONNECTING
+} socket_state;
+
 struct Socket
 {
   UUID socketUUID;
+  socket_state state;
   int fd;
   int pid;
   int domain;       /* AF_INET */
@@ -40,6 +51,7 @@ struct Socket
   int connected;
 
   struct Sockad_in *addr_in;
+  struct Sockad_in *addr_in_dest;
 };
 
 class TCPAssignment : public HostModule,
@@ -59,24 +71,25 @@ public:
 
   Socket *getSocket(int pid, int fd);
   void eraseInsocketList(Socket *sock);
+  Packet *createPacket(Socket *sock);
 
   void syscall_socket(UUID syscallUUID, int pid, int domain, int type, int protocol);
   void syscall_close(UUID syscallUUID, int pid, int fd);
   void syscall_read(UUID syscallUUID, int pid, int param1, void *param2, int param3);
   void syscall_write(UUID syscallUUID, int pid, int param1, void *param2, int param3);
-  void syscall_connect(UUID syscallUUID, int pid, int param1, 
-                       struct sockaddr *param2, 
-                       socklen_t param3);
-  void syscall_listen(UUID syscallUUID, int pid, int param1, int param2);
+  void syscall_connect(UUID syscallUUID, int pid, int sockfd, 
+                       struct sockaddr *addr, 
+                       socklen_t addrlen);
+  void syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog);
   void syscall_accept(UUID syscallUUID, int pid, int param1,
     		              struct sockaddr *param2,
     		              socklen_t *param3);
   void syscall_bind(UUID syscallUUID, int pid, int sockfd,
     		            struct sockaddr *addr,
     		            socklen_t addrlen);
-  void syscall_getsockname(UUID syscallUUID, int pid, int param1,
-    		                   struct sockaddr *param2,
-    		                   socklen_t* param3);
+  void syscall_getsockname(UUID syscallUUID, int pid, int sockfd,
+    		                   struct sockaddr *address,
+    		                   socklen_t* address_len);
   void syscall_getpeername(UUID syscallUUID, int pid, int param1,
                            struct sockaddr *param2,
                            socklen_t *param3);
@@ -89,6 +102,7 @@ protected:
   // virtual void syscall_socket (UUID syscallUUID, int pid,
   //                              int domain, int type, int protocol);
   std::vector <Socket *> socketList;
+  std::vector <Socket *> listenList;
 };
 
 class TCPAssignmentProvider {

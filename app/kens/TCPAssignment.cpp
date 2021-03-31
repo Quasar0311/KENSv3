@@ -28,6 +28,7 @@ TCPAssignment::~TCPAssignment() {}
 void TCPAssignment::initialize()
 {
   socketList = std::vector <Socket *>();
+  listenList = std::vector <Socket *>();
 }
 
 void TCPAssignment::finalize() {}
@@ -52,6 +53,21 @@ void TCPAssignment::eraseInsocketList(Socket *sock) {
       ++it;
     }
   }
+}
+
+Packet *TCPAssignment::createPacket(Socket *sock) {
+
+}
+
+void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
+  // Remove below
+  (void)fromModule;
+  (void)packet;
+}
+
+void TCPAssignment::timerCallback(std::any payload) {
+  // Remove below
+  (void)payload;
 }
 
 void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
@@ -126,6 +142,8 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int t
   newSocket->type = type;
   newSocket->protocol = protocol;
   newSocket->addr_in = NULL;
+  newSocket->addr_in_dest = NULL;
+  newSocket->state = SS_FREE;
 
   socketList.push_back(newSocket);
 
@@ -158,14 +176,61 @@ void TCPAssignment::syscall_write(UUID syscallUUID, int pid,
 }
 
 void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, 
-                                    int param1, struct sockaddr *param2, socklen_t param3) 
+                                    int sockfd, struct sockaddr *addr, socklen_t addrlen) 
 {
+  Socket *sock = getSocket(pid, sockfd);
+  // ipv4_t ip;
+  Sockad_in *address_in = new Sockad_in;
+  
+  if (sock == NULL) {
+    this -> returnSystemCall(syscallUUID, -1);
+    return;
+  }
+  
+  address_in -> sin_family = AF_INET;
+  address_in -> sin_port = ntohs(((sockaddr_in *) addr) -> sin_port);
+  address_in -> sin_addr = ntohl(((sockaddr_in *) addr) -> sin_addr.s_addr);
+
+  sock -> addr_in_dest = address_in;
+
+  int dest_port;
+  in_port_t local_port;
+  uint32_t local_ip;
+  
+  ipv4_t ip;
+  std::memcpy(&ip, (void *) &address_in -> sin_addr, 4);
+  
+  // std::optional<ipv4_t> ip = getHost() -> getIPAddr()
+
+  dest_port = getHost() -> getRoutingTable(ip);
 
 }
 
 void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, 
-                                   int param1, int param2) 
+                                   int sockfd, int backlog) 
 {
+  Socket *sock = getSocket(pid, sockfd);
+
+  // std::cout << "backlog : " << backlog;
+
+  if (sock == NULL) {
+    this -> returnSystemCall(syscallUUID, -1);
+    return;
+  }
+
+  if (sock -> state != SS_BIND) {
+    this -> returnSystemCall(syscallUUID, -1);
+    return;
+  }
+
+  if (backlog < listenList.size() || backlog < 0) {
+    this -> returnSystemCall(syscallUUID, -1);
+    return;
+  }
+
+  sock -> state = SS_LISTEN;
+  listenList.push_back(sock);
+  this -> returnSystemCall(syscallUUID, 0);
 
 }
 
@@ -184,9 +249,11 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
   // You should implement both cases.
   Socket *sock = getSocket(pid, sockfd);
   Sockad_in *address_in = new Sockad_in;
+  std::vector <Socket *>::iterator it;
 
   if (sock == NULL) {
     this -> returnSystemCall(syscallUUID, -1);
+    return;
   }
 
   if (sock -> addr_in != NULL) {
@@ -194,18 +261,54 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
     return;
   }
 
+  for (it = socketList.begin(); it != socketList.end(); it++) {
+    Socket *socket_temp = (*it);
+    if (socket_temp -> addr_in != NULL) {
+      if (socket_temp -> addr_in -> sin_port == ntohs(((sockaddr_in *) addr) -> sin_port))
+      {
+        if (socket_temp -> addr_in -> sin_addr == ntohs(INADDR_ANY)
+            || socket_temp -> addr_in -> sin_addr == ntohs(((sockaddr_in *) addr) -> sin_port))
+        {
+          this -> returnSystemCall(syscallUUID, -1);
+          return;
+        }
+      }
+    }
+  }
+
   address_in -> sin_family = AF_INET;
-  address_in -> sin_port = ntohs(((sockaddr_in *) &addr) -> sin_port);
-  address_in -> sin_addr = ntohl(((sockaddr_in *) &addr) -> sin_addr.s_addr);
+  address_in -> sin_port = ntohs(((sockaddr_in *) addr) -> sin_port);
+  address_in -> sin_addr = ntohl(((sockaddr_in *) addr) -> sin_addr.s_addr);
   
   sock -> addr_in = address_in;
+  sock -> state = SS_BIND;
 
   this -> returnSystemCall(syscallUUID, 0);
 }
 
-void TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int param1,
-    		                                struct sockaddr *param2, socklen_t* param3) 
+void TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd,
+    		                                struct sockaddr *address, socklen_t* address_len) 
 {
+  // It should return the current address to which the socket is bound. 
+  // Upon successful completion, 0 shall be returned, 
+  // the address argument shall point to the address of the socket, 
+  // and the address_len argument shall point to the length of the address.
+  Socket *sock = getSocket(pid, sockfd);
+
+  if (sock == NULL) {
+    this -> returnSystemCall(syscallUUID, -1);
+  }
+
+  if (sock -> addr_in == NULL) {
+    this -> returnSystemCall(syscallUUID, -1);
+    return;
+  }
+
+  ((sockaddr_in *) address) -> sin_family = sock -> addr_in -> sin_family;
+  ((sockaddr_in *) address) -> sin_addr.s_addr = htonl(sock -> addr_in -> sin_addr);
+  ((sockaddr_in *) address) -> sin_port = htons(sock -> addr_in -> sin_port);
+  // *address_len = 
+  this -> returnSystemCall(syscallUUID, 0);
 
 }
 
@@ -214,18 +317,6 @@ void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int param1,
 {
   
 }
-
-void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
-  // Remove below
-  (void)fromModule;
-  (void)packet;
-}
-
-void TCPAssignment::timerCallback(std::any payload) {
-  // Remove below
-  (void)payload;
-}
-
 
 
 } // namespace E
