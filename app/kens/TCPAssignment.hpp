@@ -23,6 +23,13 @@
 
 namespace E {
 
+const uint8_t FIN = 1;
+const uint8_t SYN = 2;
+const uint8_t RST = 4;
+const uint8_t PSH = 8;
+const uint8_t ACK = 16;
+const uint8_t URG = 32;
+
 struct Sockad_in {
   sa_family_t    sin_family; /* address family: AF_INET */
   in_port_t      sin_port;   /* port in network byte order */
@@ -50,6 +57,9 @@ struct Socket
   int protocol;     /* PROTOCOLS */
   int connected;
 
+  uint32_t seq_num;
+  uint32_t ack_num;
+
   struct Sockad_in *addr_in;
   struct Sockad_in *addr_in_dest;
 };
@@ -69,9 +79,11 @@ public:
   virtual void finalize();
   virtual ~TCPAssignment();
 
+  UUID connect_lock_UUID;
+
   Socket *getSocket(int pid, int fd);
   void eraseInsocketList(Socket *sock);
-  Packet *createPacket(Socket *sock);
+  Packet createPacket(Socket *sock, const uint8_t flag);
 
   void syscall_socket(UUID syscallUUID, int pid, int domain, int type, int protocol);
   void syscall_close(UUID syscallUUID, int pid, int fd);
