@@ -48,6 +48,10 @@ void TCPAssignment::eraseInsocketList(Socket *sock) {
   std::vector <Socket *>::iterator it;
   for (it = socketList.begin(); it != socketList.end();) {
     if ((*it) == sock) {
+      // std::vector<myType *> erase() does not automatically destroies the instance.
+      delete (*it)->addr_in;
+      delete (*it)->addr_in_dest;
+      delete (*it);
       it = socketList.erase(it);
     }
     else {
@@ -419,7 +423,7 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
   // The sin_addr field must be either an IP address or INADDR_ANY. 
   // You should implement both cases.
   Socket *sock = getSocket(pid, sockfd);
-  Sockad_in *address_in = new Sockad_in;
+  Sockad_in *address_in;
   std::vector <Socket *>::iterator it;
 
   if (sock == NULL) {
@@ -447,6 +451,7 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
     }
   }
 
+  address_in = new Sockad_in;
   address_in -> sin_family = AF_INET;
   address_in -> sin_port = ntohs(((sockaddr_in *) addr) -> sin_port);
   address_in -> sin_addr = ntohl(((sockaddr_in *) addr) -> sin_addr.s_addr);
@@ -478,7 +483,7 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd,
   ((sockaddr_in *) address) -> sin_family = sock -> addr_in -> sin_family;
   ((sockaddr_in *) address) -> sin_addr.s_addr = htonl(sock -> addr_in -> sin_addr);
   ((sockaddr_in *) address) -> sin_port = htons(sock -> addr_in -> sin_port);
-  // *address_len = 
+  *address_len = sizeof (struct sockaddr_in);
   this -> returnSystemCall(syscallUUID, 0);
 
 }

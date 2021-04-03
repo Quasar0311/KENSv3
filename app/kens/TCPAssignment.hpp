@@ -31,9 +31,10 @@ const uint8_t ACK = 16;
 const uint8_t URG = 32;
 
 struct Sockad_in {
-  sa_family_t    sin_family; /* address family: AF_INET */
-  in_port_t      sin_port;   /* port in network byte order */
-  uint32_t sin_addr;   /* internet address */
+  sa_family_t    sin_family;      /* 2 bytes, address family: AF_INET */
+  in_port_t      sin_port;        /* 2 bytes, port in network byte order */
+  uint32_t sin_addr;              /* 4 bytes, internet address */
+  char sin_zero[8];               /* 8 bytes, zero padding */
 };
 
 typedef enum
