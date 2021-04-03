@@ -21,6 +21,17 @@
 
 #define MAX_SOCKETS 1 << 16
 
+namespace E {
+
+typedef enum
+{
+  SS_FREE = 0,
+  SS_UNCONNECTED,
+  SS_CONNECTING,
+  SS_CONNECTED,
+  SS_DISCONNECTING
+} socket_state;
+
 struct Socket
 {
   UUID socketUUID;
@@ -33,17 +44,6 @@ struct Socket
   int connected;
   struct sockaddr saddr;
 };
-
-typedef enum
-{
-  SS_FREE = 0,
-  SS_UNCONNECTED,
-  SS_CONNECTING,
-  SS_CONNECTED,
-  SS_DISCONNECTING
-} socket_state;
-
-namespace E {
 
 class TCPAssignment : public HostModule,
                       public NetworkModule,
@@ -73,6 +73,11 @@ protected:
   virtual int syscall_getsockname (UUID syscallUUID, int pid,
                                    int sockfd, struct sockaddr *address,
                                    socklen_t *address_len);
+  virtual int syscall_connect (UUID syscallUUID, int pid,
+                               int sockfd, struct sockaddr *address,
+                               socklen_t address_len);
+  virtual int syscall_close (UUID syscallUUID, int pid,
+                             int fildes);
   virtual struct Socket * SockfdLookup (int fd);
 
   std::array <struct Socket *, MAX_SOCKETS> sockList;
