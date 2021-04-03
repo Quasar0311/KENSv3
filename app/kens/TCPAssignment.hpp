@@ -62,6 +62,8 @@ struct Socket
 
   struct Sockad_in *addr_in;
   struct Sockad_in *addr_in_dest;
+
+  std::vector <Socket *> connection_queue;
 };
 
 class TCPAssignment : public HostModule,
@@ -93,9 +95,9 @@ public:
                        struct sockaddr *addr, 
                        socklen_t addrlen);
   void syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog);
-  void syscall_accept(UUID syscallUUID, int pid, int param1,
-    		              struct sockaddr *param2,
-    		              socklen_t *param3);
+  void syscall_accept(UUID syscallUUID, int pid, int sockfd,
+    		              struct sockaddr *address,
+    		              socklen_t *address_len);
   void syscall_bind(UUID syscallUUID, int pid, int sockfd,
     		            struct sockaddr *addr,
     		            socklen_t addrlen);
