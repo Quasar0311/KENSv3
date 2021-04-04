@@ -316,6 +316,7 @@ SystemCallInterface::~SystemCallInterface() {}
 */
 
 void SystemCallInterface::returnSystemCall(UUID syscallUUID, int val) {
+  std::cout << "Return syscall: " << syscallUUID << " val: " << val << std::endl;
   host->returnSystemCall(this, syscallUUID, val);
 }
 int SystemCallInterface::createFileDescriptor(int processID) {

@@ -34,6 +34,18 @@ void TCPAssignment::initialize()
 
 void TCPAssignment::finalize() {}
 
+void TCPAssignment::PrintAllSockets(void)
+{
+  for (std::vector <Socket *>::iterator it = socketList.begin(); it != socketList.end(); it++)
+  {
+    std::cout << (*it)->socketUUID << " " 
+              << (*it)->pid  << " " 
+              << (*it)->fd  << " " 
+              << (*it)->state << " ";
+  }
+}
+
+
 Socket *TCPAssignment::getSocket(int pid, int fd) {
   std::vector <Socket *>::iterator it;
   for (it = socketList.begin(); it != socketList.end(); it++) {
@@ -51,6 +63,10 @@ void TCPAssignment::eraseInsocketList(Socket *sock) {
       // std::vector<myType *> erase() does not automatically destroies the instance.
       delete (*it)->addr_in;
       delete (*it)->addr_in_dest;
+      for (auto p: (*it)->connection_queue)
+      {
+        delete p;
+      }
       delete (*it);
       it = socketList.erase(it);
     }
@@ -71,9 +87,23 @@ Packet TCPAssignment::createPacket(Socket *sock, uint8_t flag) {
   
   Packet pkt(54);
   
-  // ip
+  // IPv4 Header Format
+  // Offsets
+  // 0	Version	IHL	DSCP	ECN	Total Length
+  // 4	Identification	Flags	Fragment Offset
+  // 8	Time To Live	Protocol	Header Checksum
+  // 12	Source IP Address
+  // 16	Destination IP Address
   pkt.writeData(14 + 12, &addr_from_ip, 4);
   pkt.writeData(14 + 16, &addr_to_ip, 4);
+
+  // TCP Segment Header Format
+  // Offsets
+  // 0	Source port	Destination port
+  // 4	Sequence number
+  // 8	Acknowledgment number (if ACK set)
+  // 12	Data offset	Reserved NS	CWR	ECE	URG	ACK	PSH	RST	SYN	FIN	Window Size
+  // 16	Checksum	Urgent pointer (if URG set)
   pkt.writeData(34, &addr_from_port, 2);
   pkt.writeData(34 + 2, &addr_to_port, 2);
 
@@ -111,8 +141,26 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   // uint16_t window;
   // uint16_t checksum;
 
+  // TODO: validate a checksum first
+
+  // IPv4 Header Format
+  // Offsets
+  // 0	Version	IHL	DSCP	ECN	Total Length
+  // 4	Identification	Flags	Fragment Offset
+  // 8	Time To Live	Protocol	Header Checksum
+  // 12	Source IP Address
+  // 16	Destination IP Address
   packet.readData(14 + 12, &addr_from_ip, 4);
   packet.readData(14 + 16, &addr_to_ip, 4);
+  std::cout << "Packet Arrived: " << addr_from_ip << std::endl;
+
+  // TCP Segment Header Format
+  // Offsets
+  // 0	Source port	Destination port
+  // 4	Sequence number
+  // 8	Acknowledgment number (if ACK set)
+  // 12	Data offset	Reserved NS	CWR	ECE	URG	ACK	PSH	RST	SYN	FIN	Window Size
+  // 16	Checksum	Urgent pointer (if URG set)
   packet.readData(34, &addr_from_port, 2);
   packet.readData(34 + 2, &addr_to_port, 2);
 
@@ -132,25 +180,30 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   Socket *sock_found = NULL;
 
   std::vector <Socket *>::iterator it;
+  for (it = listenList.begin(); it != listenList.end(); i++)
+  {
+    Socket *sock = *it;
+    if ((sock->addr_in->sin_port == addr_to_port)
+      && sock->addr_in->sin_addr == addr_to_ip || sock->addr_in->sin_addr == htonl(INADDR_ANY))
+      {
+        /* Destination ip:port == any listening socket ip:port */
+      }
+  }
+
   for (it = socketList.begin(); it != socketList.end(); it++) {
     Socket *sock = *it;
-    if ((sock -> addr_in -> sin_addr == addr_to_ip || sock -> addr_in -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in ->sin_port == addr_to_port) {
+    if ((sock -> addr_in -> sin_addr == addr_to_ip || sock -> addr_in -> sin_addr == htonl(INADDR_ANY))
+      && sock -> addr_in ->sin_port == addr_to_port) {
       if (sock -> addr_in_dest == NULL) {
-        std :: cout << "state : " << sock -> state << "\n";
         sock_found = sock;
         break;
       }
-      if ((sock -> addr_in_dest -> sin_addr == addr_from_ip || sock -> addr_in_dest -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in_dest -> sin_port == addr_from_port) {
+      if ((sock -> addr_in_dest -> sin_addr == addr_from_ip || sock -> addr_in_dest -> sin_addr == htonl(INADDR_ANY))
+        && sock -> addr_in_dest -> sin_port == addr_from_port) {
         sock_found = sock;
         std :: cout << "got it!\n";
         break;
       }
-      else {
-        continue;
-      }
-    }
-    else {
-      continue;
     }
   }
 
@@ -178,6 +231,9 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
   (void)syscallUUID;
   (void)pid;
 
+  std::cout << "syscall: " << syscallUUID
+            << " call number: " << param.syscallNumber << std::endl;
+  getchar();
   switch (param.syscallNumber) {
   case SOCKET:
     this->syscall_socket(syscallUUID, pid, param.param1_int,
@@ -250,7 +306,8 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int t
   newSocket->connection_queue = std::vector <Socket *>();
 
   socketList.push_back(newSocket);
-
+  // PrintAllSockets();
+  // getchar();
   this -> returnSystemCall (syscallUUID, fd);
 }
 
@@ -284,18 +341,19 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
 {
   Socket *sock = getSocket(pid, sockfd);
   // ipv4_t ip;
-  Sockad_in *address_in = new Sockad_in;
+  Sockad_in *address_in_dest;
   
   if (sock == NULL) {
     this -> returnSystemCall(syscallUUID, -1);
     return;
   }
   
-  address_in -> sin_family = AF_INET;
-  address_in -> sin_port = ntohs(((sockaddr_in *) addr) -> sin_port);
-  address_in -> sin_addr = ntohl(((sockaddr_in *) addr) -> sin_addr.s_addr);
+  address_in_dest = new Sockad_in;
+  address_in_dest -> sin_family = AF_INET;
+  address_in_dest -> sin_port = ntohs(((sockaddr_in *) addr) -> sin_port);
+  address_in_dest -> sin_addr = ntohl(((sockaddr_in *) addr) -> sin_addr.s_addr);
 
-  sock -> addr_in_dest = address_in;
+  sock -> addr_in_dest = address_in_dest;
 
   int dest_port;
   in_port_t local_port;
@@ -304,7 +362,7 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
   std::vector <Socket *>::iterator it;
   
   ipv4_t ip_dest;
-  std::memcpy(&ip_dest, (void *) &address_in -> sin_addr, 4);
+  std::memcpy(&ip_dest, (void *) &address_in_dest -> sin_addr, 4);
   
   // std::optional<ipv4_t> ip = getHost() -> getIPAddr()
 
@@ -312,37 +370,21 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
   local_ipv4 = this -> getHost() -> getIPAddr(dest_port);
   std::memcpy(&local_ip, (void *) &local_ipv4, 4);
 
-  while (true) {
-    int iter = 0;
-    local_port = rand() % 65536;
-    for (it = socketList.begin(); it != socketList.end(); it++) {
-      Socket *socket_temp = (*it);
-      if (socket_temp -> addr_in -> sin_port == local_port) {
-        if (socket_temp -> addr_in -> sin_addr == ntohs(INADDR_ANY)
-            || socket_temp -> addr_in -> sin_addr == local_ip) 
-        {
-          iter = 1;
-          break;
-        }
-      }
-    }
-    if (iter == 0) {
-      break;
-    }
-  }
+  Sockad_in *address_in_src = new Sockad_in;
+  address_in_src -> sin_family = AF_INET;
+  address_in_src -> sin_port = ntohs(local_port);
+  address_in_src -> sin_addr = ntohl(local_ip);
 
-  Sockad_in *address_in_dest = new Sockad_in;
-  address_in_dest -> sin_family = AF_INET;
-  address_in_dest -> sin_port = ntohs(local_port);
-  address_in_dest -> sin_addr = ntohl(local_ip);
-
-  sock -> addr_in = address_in_dest;
+  sock -> addr_in = address_in_src;
   sock -> seq_num = rand();
   sock -> ack_num = 0;
 
   Packet packet = createPacket(sock, SYN);
+  std::cout << "Sending packet" << std::endl;
   sendPacket("IPv4", std::move(packet));
   
+  // TODO: expect ACK
+
   sock -> state = SS_CONNECTED;
   sock -> seq_num++;
 

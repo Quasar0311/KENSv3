@@ -109,6 +109,8 @@ public:
                            struct sockaddr *param2,
                            socklen_t *param3);
 
+  void PrintAllSockets(void);
+
 protected:
   virtual void systemCallback(UUID syscallUUID, int pid,
                               const SystemCallParameter &param) final;
