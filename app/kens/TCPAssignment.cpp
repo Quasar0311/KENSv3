@@ -60,10 +60,10 @@ Packet TCPAssignment::createPacket(Socket *sock, uint8_t flag) {
   Sockad_in *addr_from = sock -> addr_in;
   Sockad_in *addr_to = sock -> addr_in_dest;
 
-  uint32_t addr_from_ip = htonl(addr_from -> sin_addr);
-  uint32_t addr_to_ip = htonl(addr_to -> sin_addr);
-  uint16_t addr_from_port = htons(addr_from -> sin_port);
-  uint16_t addr_to_port = htons(addr_to -> sin_port);
+  in_addr_t addr_from_ip = (in_addr_t) htonl(addr_from -> sin_addr);
+  in_addr_t addr_to_ip = (in_addr_t) htonl(addr_to -> sin_addr);
+  in_port_t addr_from_port = (in_port_t) htons(addr_from -> sin_port);
+  in_port_t addr_to_port = (in_port_t) htons(addr_to -> sin_port);
   
   Packet pkt(54);
   
@@ -125,14 +125,16 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   seq = ntohl(seq);
   ack = ntohl(ack);
 
+  std::cout << "from : " << addr_from_ip << ", to : " << addr_to_ip << "port : " << addr_from_port << ", " << addr_to_port << "\n";
+
   Socket *sock_found = NULL;
 
   std::vector <Socket *>::iterator it;
   for (it = socketList.begin(); it != socketList.end(); it++) {
     Socket *sock = *it;
     if ((sock -> addr_in -> sin_addr == addr_to_ip || sock -> addr_in -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in ->sin_port == addr_to_port) {
-      if (sock -> addr_in_dest == NULL) {
-        std :: cout << "state : " << sock -> state << "\n";
+      if (sock -> addr_in_dest -> sin_addr == 0) {
+        // std :: cout << "state : " << sock -> state << "\n";
         sock_found = sock;
         break;
       }
@@ -153,13 +155,30 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   if (sock_found == NULL) {
     std::cout << "Not found\n";
   }
-
+  std::cout << "seq_num : " << sock_found -> seq_num << ", flag : " << flag <<"\n";
   switch (sock_found -> state) {
-    case SS_LISTEN:
-      ;
-    default:
-      ;
+    case SS_LISTEN: {
+      std :: cout << "sock ip : " << sock_found -> addr_in -> sin_addr << "\n";
+
+      sock_found -> addr_in -> sin_addr = addr_from_ip;
+      sock_found -> addr_in -> sin_port = addr_from_port;
+      sock_found -> addr_in -> sin_family = AF_INET;
+
+      sock_found -> addr_in_dest -> sin_addr = addr_to_ip;
+      sock_found -> addr_in_dest -> sin_port = addr_to_port;
+      sock_found -> addr_in_dest -> sin_family = AF_INET;
+      sock_found -> seq_num = rand();
+      sock_found -> ack_num = seq + 1;
+      Packet pkt = createPacket(sock_found, SYN + ACK);
+
+      this -> sendPacket("IPv4", std::move(pkt));
+      break;
+    }
+    default: {
+      break;
+    }
   }
+  
 }
 
 void TCPAssignment::timerCallback(std::any payload) {
@@ -238,15 +257,14 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int t
   newSocket->domain = domain;
   newSocket->type = type;
   newSocket->protocol = protocol;
-  newSocket->addr_in = NULL;
-  newSocket->addr_in_dest = NULL;
+  newSocket->addr_in = new Sockad_in;
+  newSocket->addr_in_dest = new Sockad_in;
   newSocket->state = SS_FREE;
   newSocket->ack_num = 0;
   newSocket->seq_num = 0;
   newSocket->connection_queue = std::vector <Socket *>();
 
   socketList.push_back(newSocket);
-
   this -> returnSystemCall (syscallUUID, fd);
 }
 
@@ -281,7 +299,7 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
   Socket *sock = getSocket(pid, sockfd);
   // ipv4_t ip;
   Sockad_in *address_in = new Sockad_in;
-  
+  std::cout << "connecting...\n";
   if (sock == NULL) {
     this -> returnSystemCall(syscallUUID, -1);
     return;
@@ -300,13 +318,16 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
   std::vector <Socket *>::iterator it;
   
   ipv4_t ip_dest;
-  std::memcpy(&ip_dest, (void *) &address_in -> sin_addr, 4);
+  // std::memcpy(&ip_dest, (void *) &address_in -> sin_addr, 4);
+  ip_dest = NetworkUtil::UINT64ToArray<4>(address_in -> sin_addr);
   
   // std::optional<ipv4_t> ip = getHost() -> getIPAddr()
 
   dest_port = getHost() -> getRoutingTable(ip_dest);
   local_ipv4 = this -> getHost() -> getIPAddr(dest_port);
-  std::memcpy(&local_ip, (void *) &local_ipv4, 4);
+  
+  // std::memcpy(&local_ip, (void *) &local_ipv4, 4);
+  local_ip = NetworkUtil::arrayToUINT64<4>(local_ipv4.value());
 
   while (true) {
     int iter = 0;
@@ -337,7 +358,7 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
   sock -> ack_num = 0;
 
   Packet packet = createPacket(sock, SYN);
-  sendPacket("IPv4", std::move(packet));
+  this -> sendPacket("IPv4", std::move(packet));
   
   sock -> state = SS_CONNECTED;
   sock -> seq_num++;
@@ -368,8 +389,10 @@ void TCPAssignment::syscall_listen(UUID syscallUUID, int pid,
     return;
   }
 
+  std:: cout << "sock state : " << sock -> state << "\n";
   sock -> state = SS_LISTEN;
   listenList.push_back(sock);
+  // std::cout << "listen from : " << sock -> addr_in -> sin_addr << ", to : " << sock -> addr_in_dest ->sin_addr << "\n";
   this -> returnSystemCall(syscallUUID, 0);
 
 }
@@ -389,26 +412,27 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid,
     // addr_in -> sin_port = htons(sock -> addr_in -> sin_port);
     // addr_in -> sin_family = AF_INET;
     // this -> returnSystemCall(syscallUUID, 0);
-    return;
+    
   }
+  else {
+    connection_sock = sock -> connection_queue.front();
+    sock -> connection_queue.erase(sock -> connection_queue.begin());
 
-  connection_sock = sock -> connection_queue.front();
-  sock -> connection_queue.erase(sock -> connection_queue.begin());
+    if ((fd = createFileDescriptor(pid)) == -1) {
+      this -> returnSystemCall(syscallUUID, -1);
+      return;
+    }
+    connection_sock->fd = fd;
 
-  if ((fd = createFileDescriptor(pid)) == -1) {
-    this -> returnSystemCall(syscallUUID, -1);
-    return;
+    socketList.push_back(connection_sock);
+
+    sockaddr_in *addr_in = (sockaddr_in *) address;
+    addr_in -> sin_addr.s_addr = htonl(connection_sock -> addr_in_dest -> sin_addr);
+    addr_in -> sin_port = htons(connection_sock -> addr_in_dest -> sin_port);
+    addr_in -> sin_family = AF_INET;
+    
+    this -> returnSystemCall(syscallUUID, fd);
   }
-  connection_sock->fd = fd;
-
-  socketList.push_back(connection_sock);
-
-  sockaddr_in *addr_in = (sockaddr_in *) address;
-  addr_in -> sin_addr.s_addr = htonl(connection_sock -> addr_in_dest -> sin_addr);
-  addr_in -> sin_port = htons(connection_sock -> addr_in_dest -> sin_port);
-  addr_in -> sin_family = AF_INET;
-  
-  this -> returnSystemCall(syscallUUID, fd);
 }
 
 void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
@@ -423,14 +447,16 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
   std::vector <Socket *>::iterator it;
 
   if (sock == NULL) {
+    std :: cout << "e1\n";
     this -> returnSystemCall(syscallUUID, -1);
     return;
   }
 
-  if (sock -> addr_in != NULL) {
-    this -> returnSystemCall(syscallUUID, -1);
-    return;
-  }
+  // if (sock -> addr_in -> sin_addr == 0) {
+  //   std :: cout << "e2\n";
+  //   this -> returnSystemCall(syscallUUID, -1);
+  //   return;
+  // }
 
   for (it = socketList.begin(); it != socketList.end(); it++) {
     Socket *socket_temp = (*it);
@@ -440,6 +466,7 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
         if (socket_temp -> addr_in -> sin_addr == ntohs(INADDR_ANY)
             || socket_temp -> addr_in -> sin_addr == ntohs(((sockaddr_in *) addr) -> sin_addr.s_addr))
         {
+          std :: cout << "e3\n";
           this -> returnSystemCall(syscallUUID, -1);
           return;
         }
@@ -450,9 +477,13 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
   address_in -> sin_family = AF_INET;
   address_in -> sin_port = ntohs(((sockaddr_in *) addr) -> sin_port);
   address_in -> sin_addr = ntohl(((sockaddr_in *) addr) -> sin_addr.s_addr);
+
+  std::cout << "adrin bind : " << address_in -> sin_addr << "\n";
   
   sock -> addr_in = address_in;
   sock -> state = SS_BIND;
+
+  
 
   this -> returnSystemCall(syscallUUID, 0);
 }
