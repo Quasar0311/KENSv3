@@ -29,6 +29,7 @@ void TCPAssignment::initialize()
 {
   socketList = std::vector <Socket *>();
   listenList = std::vector <Socket *>();
+  acceptList = std::vector <std::pair<UUID, Socket *>>();
   connect_lock_UUID = 0;
 }
 
@@ -73,8 +74,9 @@ Packet TCPAssignment::createPacket(Socket *sock, uint8_t flag) {
   pkt.writeData(34, &addr_from_port, 2);
   pkt.writeData(34 + 2, &addr_to_port, 2);
 
-  uint32_t seq = sock -> seq_num;
-  uint32_t ack = sock -> ack_num;
+  uint32_t seq = htonl (sock -> seq_num);
+  uint32_t ack = htonl (sock -> ack_num);
+
 
   pkt.writeData(34 + 4, &seq, 4);
   pkt.writeData(34 + 8, &ack, 4);
@@ -94,11 +96,13 @@ Packet TCPAssignment::createPacket(Socket *sock, uint8_t flag) {
   return pkt;
 }
 
-void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
+void TCPAssignment::printPacket (Packet &&packet)
+{
   uint32_t addr_from_ip;
   uint32_t addr_to_ip;
   uint16_t addr_from_port;
   uint16_t addr_to_port;
+  uint16_t checksum;
   
   uint32_t seq;
   uint32_t ack;
@@ -116,6 +120,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   packet.readData(34 + 8, &ack, 4);
   packet.readData(34 + 12, &head_len, 1);
   packet.readData(34 + 13, &flag, 1);
+  packet.readData(34 + 16, &checksum, 2);
 
   addr_from_ip = ntohl(addr_from_ip);
   addr_from_port = ntohs(addr_from_port);
@@ -125,60 +130,210 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   seq = ntohl(seq);
   ack = ntohl(ack);
 
-  std::cout << "from : " << addr_from_ip << ", to : " << addr_to_ip << "port : " << addr_from_port << ", " << addr_to_port << "\n";
+  std::cout << "source ip: " << addr_from_ip
+            << " source port: " << addr_from_port
+            << " dest ip: " << addr_to_ip
+            << " dest port: " << addr_to_port
+            << " flag: " << flag
+            << " seq: " << seq << " ack: " << ack
+            << " head_len: " << head_len << " checksum: " << checksum 
+            << std::endl;
+}
+
+void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
+  printPacket (std::move(packet));
+  getchar();
+  uint32_t addr_from_ip;
+  uint32_t addr_to_ip;
+  uint16_t addr_from_port;
+  uint16_t addr_to_port;
+  uint16_t checksum;
+
+  uint32_t seq;
+  uint32_t ack;
+  uint8_t head_len;
+  uint8_t flag;
+  // uint16_t window;
+  packet.readData(14 + 12, &addr_from_ip, 4);
+  packet.readData(14 + 16, &addr_to_ip, 4);
+
+  packet.readData(34 + 16, &checksum, 2);
+  uint8_t tcp_seg_buf[20];
+  uint16_t checksum_cal = NetworkUtil::tcp_sum(addr_from_ip, addr_to_ip, tcp_seg_buf, 20);
+  // if (checksum != ~checksum_cal)
+  // {
+  //   std::cout << "wrong checksum" << std::endl;
+  //   return;
+  // }
+  packet.readData(34, &addr_from_port, 2);
+  packet.readData(34 + 2, &addr_to_port, 2);
+
+  packet.readData(34 + 4, &seq, 4);
+  packet.readData(34 + 8, &ack, 4);
+  packet.readData(34 + 12, &head_len, 1);
+  packet.readData(34 + 13, &flag, 1);
+
+  addr_from_ip = ntohl(addr_from_ip);
+  addr_from_port = ntohs(addr_from_port);
+  addr_to_ip = ntohl(addr_to_ip);
+  addr_to_port = ntohs(addr_to_port);
+
+  seq = ntohl(seq);
+  ack = ntohl(ack);
 
   Socket *sock_found = NULL;
-
   std::vector <Socket *>::iterator it;
-  for (it = socketList.begin(); it != socketList.end(); it++) {
+  for (it = listenList.begin(); it != listenList.end(); it++)
+  {
     Socket *sock = *it;
     if ((sock -> addr_in -> sin_addr == addr_to_ip || sock -> addr_in -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in ->sin_port == addr_to_port) {
-      if (sock -> addr_in_dest -> sin_addr == 0) {
-        // std :: cout << "state : " << sock -> state << "\n";
-        sock_found = sock;
-        break;
+      // Client or Server
+      if (sock->state == SS_LISTEN)
+      {
+        if (flag & SYN)
+        {
+          // acceptList에 <?, sock>가 있으면, accept가 block 중이라는 것
+          std::vector <std::pair<UUID, Socket *>>::iterator accept_it;
+          for (accept_it = acceptList.begin(); accept_it != acceptList.end(); accept_it++)
+          {
+            std::pair<UUID, Socket *> pair = (*accept_it);
+            if ((pair.second->addr_in->sin_addr == addr_to_ip || pair.second->addr_in->sin_addr == htonl (INADDR_ANY))
+              && pair.second->addr_in->sin_port == addr_to_port)
+            {
+              Packet pkt = createPacket (pair.second, SYN | ACK);
+              sendPacket ("IPv4", std::move(pkt));
+              pair.second->state = SS_SYNRCVD;
+              return;
+            }
+          }
+          // 없으면, connection_queue에 넣어주면 됨
+          sockaddr_in *addr_in_src = new sockaddr_in;
+          addr_in_src->sin_addr.s_addr = addr_from_ip;
+          addr_in_src->sin_port = addr_from_port;
+          addr_in_src->sin_family = AF_INET;
+
+          sock->connection_queue.push_back (addr_in_src);
+        }
+        return;
       }
-      if ((sock -> addr_in_dest -> sin_addr == addr_from_ip || sock -> addr_in_dest -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in_dest -> sin_port == addr_from_port) {
-        sock_found = sock;
-        std :: cout << "got it!\n";
-        break;
+      // Client
+      if (sock->state == SS_SYNSENT)
+      {
+        if (flag & (SYN | ACK))
+        {
+          sock->ack_num = seq + 1;
+          Packet pkt = createPacket (sock, ACK);
+          sendPacket ("IPv4", std::move(pkt));
+          sock->state = SS_CONNECTED;
+        }
+        return;
       }
-      else {
-        continue;
+      // Server
+      if (sock->state == SS_SYNRCVD)
+      {
+        if (flag & ACK)
+        {
+          std::vector <std::pair<UUID, Socket *>>::iterator accept_it;
+          for (accept_it = acceptList.begin(); accept_it != acceptList.end(); accept_it++)
+          {
+            std::pair<UUID, Socket *> pair = (*accept_it);
+            if ((pair.second->addr_in->sin_addr == addr_to_ip || pair.second->addr_in->sin_addr == htonl (INADDR_ANY))
+              && pair.second->addr_in->sin_port == addr_to_port)
+            {
+              int fd;
+              acceptList.erase (accept_it);
+
+              if ((fd = createFileDescriptor(sock->pid)) == -1) {
+                this -> returnSystemCall(pair.first, -1);
+                return;
+              }
+
+              Socket *newSocket = new Socket;
+              newSocket->socketUUID = pair.first;
+              newSocket->fd = fd;
+              newSocket->pid = sock->pid;
+              // newSocket->domain = domain;
+              // newSocket->type = type;
+              // newSocket->protocol = protocol;
+              newSocket->addr_in = new Sockad_in;
+              newSocket->addr_in_dest = new Sockad_in;
+              newSocket->state = SS_CONNECTED;
+              newSocket->ack_num = 0;
+              newSocket->seq_num = 0;
+              newSocket->connection_queue = std::vector <sockaddr_in *>();
+
+              socketList.push_back(newSocket);
+
+              sockaddr_in *addr_in_dest = new sockaddr_in;
+              addr_in_dest -> sin_addr.s_addr = addr_from_ip;
+              addr_in_dest -> sin_port = addr_from_port;
+              addr_in_dest -> sin_family = AF_INET;
+              newSocket->addr_in_dest = addr_in_dest;
+
+              // TODO: newSocket->addr_in 에 Host() 정보
+              
+              pair.second->state = SS_CONNECTED;
+              this -> returnSystemCall(pair.first, fd);
+            }
+          }
+        }
+        return;
       }
-    }
-    else {
-      continue;
     }
   }
 
-  if (sock_found == NULL) {
-    std::cout << "Not found\n";
-  }
-  std::cout << "seq_num : " << sock_found -> seq_num << ", flag : " << flag <<"\n";
-  switch (sock_found -> state) {
-    case SS_LISTEN: {
-      std :: cout << "sock ip : " << sock_found -> addr_in -> sin_addr << "\n";
+// --------------
 
-      sock_found -> addr_in -> sin_addr = addr_from_ip;
-      sock_found -> addr_in -> sin_port = addr_from_port;
-      sock_found -> addr_in -> sin_family = AF_INET;
+  // std::vector <Socket *>::iterator it;
+  // for (it = socketList.begin(); it != socketList.end(); it++) {
+  //   Socket *sock = *it;
+  //   if ((sock -> addr_in -> sin_addr == addr_to_ip || sock -> addr_in -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in ->sin_port == addr_to_port) {
+  //     if (sock -> addr_in_dest -> sin_addr == 0) {
+  //       // std :: cout << "state : " << sock -> state << "\n";
+  //       sock_found = sock;
+  //       break;
+  //     }
+  //     if ((sock -> addr_in_dest -> sin_addr == addr_from_ip || sock -> addr_in_dest -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in_dest -> sin_port == addr_from_port) {
+  //       sock_found = sock;
+  //       std :: cout << "got it!\n";
+  //       break;
+  //     }
+  //     else {
+  //       continue;
+  //     }
+  //   }
+  //   else {
+  //     continue;
+  //   }
+  // }
 
-      sock_found -> addr_in_dest -> sin_addr = addr_to_ip;
-      sock_found -> addr_in_dest -> sin_port = addr_to_port;
-      sock_found -> addr_in_dest -> sin_family = AF_INET;
-      sock_found -> seq_num = rand();
-      sock_found -> ack_num = seq + 1;
-      Packet pkt = createPacket(sock_found, SYN + ACK);
+  // if (sock_found == NULL) {
+  //   std::cout << "Not found\n";
+  // }
+  // std::cout << "seq_num : " << sock_found -> seq_num << ", flag : " << flag <<"\n";
+  // switch (sock_found -> state) {
+  //   case SS_LISTEN: {
+  //     std :: cout << "sock ip : " << sock_found -> addr_in -> sin_addr << "\n";
 
-      this -> sendPacket("IPv4", std::move(pkt));
-      break;
-    }
-    default: {
-      break;
-    }
-  }
-  
+  //     sock_found -> addr_in -> sin_addr = addr_from_ip;
+  //     sock_found -> addr_in -> sin_port = addr_from_port;
+  //     sock_found -> addr_in -> sin_family = AF_INET;
+
+  //     sock_found -> addr_in_dest -> sin_addr = addr_to_ip;
+  //     sock_found -> addr_in_dest -> sin_port = addr_to_port;
+  //     sock_found -> addr_in_dest -> sin_family = AF_INET;
+  //     sock_found -> seq_num = rand();
+  //     sock_found -> ack_num = seq + 1;
+  //     Packet pkt = createPacket(sock_found, SYN + ACK);
+  //     printPacket (std::move(pkt));
+
+  //     this -> sendPacket("IPv4", std::move(pkt));
+  //     break;
+  //   }
+  //   default: {
+  //     break;
+  //   }
+  // }
 }
 
 void TCPAssignment::timerCallback(std::any payload) {
@@ -192,6 +347,10 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
   // Remove below
   (void)syscallUUID;
   (void)pid;
+
+  std::cout << "syscalluuid: " << syscallUUID
+            << " number: " << param.syscallNumber << std::endl;
+  getchar();
 
   switch (param.syscallNumber) {
   case SOCKET:
@@ -262,7 +421,7 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid, int domain, int t
   newSocket->state = SS_FREE;
   newSocket->ack_num = 0;
   newSocket->seq_num = 0;
-  newSocket->connection_queue = std::vector <Socket *>();
+  newSocket->connection_queue = std::vector <sockaddr_in *>();
 
   socketList.push_back(newSocket);
   this -> returnSystemCall (syscallUUID, fd);
@@ -304,7 +463,8 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
     this -> returnSystemCall(syscallUUID, -1);
     return;
   }
-  
+
+  // server 
   address_in -> sin_family = AF_INET;
   address_in -> sin_port = ntohs(((sockaddr_in *) addr) -> sin_port);
   address_in -> sin_addr = ntohl(((sockaddr_in *) addr) -> sin_addr.s_addr);
@@ -348,23 +508,23 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
     }
   }
 
-  Sockad_in *address_in_dest = new Sockad_in;
-  address_in_dest -> sin_family = AF_INET;
-  address_in_dest -> sin_port = ntohs(local_port);
-  address_in_dest -> sin_addr = ntohl(local_ip);
+  Sockad_in *address_in_src = new Sockad_in;
+  address_in_src -> sin_family = AF_INET;
+  address_in_src -> sin_port = ntohs(local_port);
+  address_in_src -> sin_addr = ntohl(local_ip);
 
-  sock -> addr_in = address_in_dest;
+  sock -> addr_in = address_in_src;
   sock -> seq_num = rand();
   sock -> ack_num = 0;
 
   Packet packet = createPacket(sock, SYN);
   this -> sendPacket("IPv4", std::move(packet));
   
-  sock -> state = SS_CONNECTED;
+  sock -> state = SS_SYNSENT;
+  listenList.push_back (sock);
   sock -> seq_num++;
 
   this -> connect_lock_UUID = syscallUUID;
-
 }
 
 void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, 
@@ -401,35 +561,53 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid,
                                    int socketfd, struct sockaddr *address, socklen_t *address_len) 
 {
   Socket *sock = getSocket(pid, socketfd);
-  Socket *connection_sock;
+  sockaddr_in *addr_in_client;
+  Socket *newSocket = new Socket;
   int fd;
 
   if (sock -> connection_queue.size() == 0) {
     std::cout << "connection queue is empty\n";
-    // sockaddr_in *addr_in = (sockaddr_in *) address;
-    // memset(addr_in, 0, sizeof(struct sockaddr_in));
-    // addr_in -> sin_addr.s_addr = htonl(sock -> addr_in -> sin_addr);
-    // addr_in -> sin_port = htons(sock -> addr_in -> sin_port);
-    // addr_in -> sin_family = AF_INET;
-    // this -> returnSystemCall(syscallUUID, 0);
-    
+    // acceptList에 <syscalluuid, sock> push
+    acceptList.push_back (std::pair(syscallUUID, sock));
+    return;
   }
-  else {
-    connection_sock = sock -> connection_queue.front();
-    sock -> connection_queue.erase(sock -> connection_queue.begin());
 
+  else {
+    // 새로 server가 알고있는 client socket 만들기Socket *newSocket = new Socket;
+    addr_in_client = sock->connection_queue.front();
+    sock -> connection_queue.erase(sock -> connection_queue.begin());
+    
     if ((fd = createFileDescriptor(pid)) == -1) {
       this -> returnSystemCall(syscallUUID, -1);
       return;
     }
-    connection_sock->fd = fd;
+    newSocket->fd = fd;
+    newSocket->socketUUID = syscallUUID;
+    newSocket->pid = pid;
+    // newSocket->domain = domain;
+    // newSocket->type = type;
+    // newSocket->protocol = protocol;
+    newSocket->addr_in = new Sockad_in;
+    newSocket->addr_in_dest = new Sockad_in;
+    newSocket->state = SS_CONNECTED;
+    newSocket->ack_num = 0;
+    newSocket->seq_num = 0;
+    newSocket->connection_queue = std::vector <sockaddr_in *>();
 
-    socketList.push_back(connection_sock);
+    // newSocket->addr_in = (Sockad_in *) addr_in_client;
+    // TODO: newSocket->addr_in 에 Host() 정보
+    newSocket->addr_in_dest = (Sockad_in*) addr_in_client;
+    socketList.push_back(newSocket);
 
+    sock->state = SS_CONNECTED;
     sockaddr_in *addr_in = (sockaddr_in *) address;
-    addr_in -> sin_addr.s_addr = htonl(connection_sock -> addr_in_dest -> sin_addr);
-    addr_in -> sin_port = htons(connection_sock -> addr_in_dest -> sin_port);
+    addr_in -> sin_addr.s_addr = newSocket -> addr_in_dest -> sin_addr;
+    addr_in -> sin_port = newSocket -> addr_in_dest -> sin_port;
     addr_in -> sin_family = AF_INET;
+
+    std::cout << "sin_family: " << newSocket->addr_in->sin_family
+              << " sin_port: " << newSocket->addr_in->sin_port
+              << " sin_addr: " << newSocket->addr_in->sin_addr << std::endl;
     
     this -> returnSystemCall(syscallUUID, fd);
   }
@@ -478,7 +656,9 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
   address_in -> sin_port = ntohs(((sockaddr_in *) addr) -> sin_port);
   address_in -> sin_addr = ntohl(((sockaddr_in *) addr) -> sin_addr.s_addr);
 
-  std::cout << "adrin bind : " << address_in -> sin_addr << "\n";
+  std::cout << "sin_family: " << address_in->sin_family
+            << " sin_port: " << address_in->sin_port
+            << " sin_addr: " << address_in->sin_addr << std::endl;
   
   sock -> addr_in = address_in;
   sock -> state = SS_BIND;
@@ -498,6 +678,7 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd,
   Socket *sock = getSocket(pid, sockfd);
 
   if (sock == NULL) {
+    std::cout << "no such socket\n";
     this -> returnSystemCall(syscallUUID, -1);
   }
 

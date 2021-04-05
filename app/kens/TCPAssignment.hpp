@@ -34,6 +34,7 @@ struct Sockad_in {
   sa_family_t    sin_family; /* address family: AF_INET */
   in_port_t      sin_port;   /* port in network byte order */
   uint32_t sin_addr;   /* internet address */
+  char sin_zero[8];
 };
 
 typedef enum
@@ -42,6 +43,8 @@ typedef enum
   SS_UNCONNECTED,
   SS_BIND,
   SS_LISTEN,
+  SS_SYNSENT,
+  SS_SYNRCVD,
   SS_CONNECTED,
   SS_DISCONNECTING
 } socket_state;
@@ -63,7 +66,7 @@ struct Socket
   struct Sockad_in *addr_in;
   struct Sockad_in *addr_in_dest;
 
-  std::vector <Socket *> connection_queue;
+  std::vector <sockaddr_in *> connection_queue;
 };
 
 class TCPAssignment : public HostModule,
@@ -108,6 +111,8 @@ public:
                            struct sockaddr *param2,
                            socklen_t *param3);
 
+  void printPacket (Packet &&packet);
+
 protected:
   virtual void systemCallback(UUID syscallUUID, int pid,
                               const SystemCallParameter &param) final;
@@ -117,6 +122,7 @@ protected:
   //                              int domain, int type, int protocol);
   std::vector <Socket *> socketList;
   std::vector <Socket *> listenList;
+  std::vector <std::pair<UUID, Socket *>> acceptList;
 };
 
 class TCPAssignmentProvider {
