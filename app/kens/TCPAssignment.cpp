@@ -29,6 +29,7 @@ void TCPAssignment::initialize()
 {
   socketList = std::vector <Socket *>();
   listenList = std::vector <Socket *>();
+  acceptList = std::vector <Socket *>();
   connect_lock_UUID = 0;
 }
 
@@ -128,6 +129,11 @@ Packet TCPAssignment::createPacket(Socket *sock, uint8_t flag) {
   return pkt;
 }
 
+// Process a packet inbound to sockfd
+void TCPAssignment::processPacket (int sockfd, Packet &&packet)
+{
+}
+
 void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   uint32_t addr_from_ip;
   uint32_t addr_to_ip;
@@ -180,30 +186,32 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   Socket *sock_found = NULL;
 
   std::vector <Socket *>::iterator it;
-  for (it = listenList.begin(); it != listenList.end(); i++)
+  for (it = listenList.begin(); it != listenList.end(); it++)
   {
     Socket *sock = *it;
     if ((sock->addr_in->sin_port == addr_to_port)
-      && sock->addr_in->sin_addr == addr_to_ip || sock->addr_in->sin_addr == htonl(INADDR_ANY))
+      && (sock->addr_in->sin_addr == addr_to_ip || sock->addr_in->sin_addr == htonl(INADDR_ANY)))
       {
         /* Destination ip:port == any listening socket ip:port */
+        std::vector <std::pair <int, Socket *>>::iterator it_pair;
+        for (it_pair = acceptList.begin(); it_pair != acceptList.end(); it_pair++)
+        {
+          if (it_pair->second)
+          {
+            returnSystemCall (it_pair->first, );
+          }
+        }
       }
   }
 
-  for (it = socketList.begin(); it != socketList.end(); it++) {
+  // No accept waiting socket for this packet
+  for (it = listenList.begin(); it != listenList.end(); it++)
+  {
     Socket *sock = *it;
-    if ((sock -> addr_in -> sin_addr == addr_to_ip || sock -> addr_in -> sin_addr == htonl(INADDR_ANY))
-      && sock -> addr_in ->sin_port == addr_to_port) {
-      if (sock -> addr_in_dest == NULL) {
-        sock_found = sock;
-        break;
-      }
-      if ((sock -> addr_in_dest -> sin_addr == addr_from_ip || sock -> addr_in_dest -> sin_addr == htonl(INADDR_ANY))
-        && sock -> addr_in_dest -> sin_port == addr_from_port) {
-        sock_found = sock;
-        std :: cout << "got it!\n";
-        break;
-      }
+    if ((sock->addr_in->sin_port == addr_to_port)
+      && (sock->addr_in->sin_addr == addr_to_ip || sock->addr_in->sin_addr == htonl(INADDR_ANY)))
+    {
+      sock->connection_queue.push_back ()
     }
   }
 
@@ -380,10 +388,11 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
   sock -> ack_num = 0;
 
   Packet packet = createPacket(sock, SYN);
-  std::cout << "Sending packet" << std::endl;
+  std::cout << "connect: Sending SYN packet" << std::endl;
   sendPacket("IPv4", std::move(packet));
-  
-  // TODO: expect ACK
+
+  // expect ACK
+  listenList.push_back (sock);
 
   sock -> state = SS_CONNECTED;
   sock -> seq_num++;
