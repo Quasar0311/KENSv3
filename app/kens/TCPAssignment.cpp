@@ -194,6 +194,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   for (it = listenList.begin(); it != listenList.end(); it++)
   {
     Socket *sock = *it;
+    // std::cout << "packet port : " << addr_to_port << "\n";
     if ((sock -> addr_in -> sin_addr == addr_to_ip || sock -> addr_in -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in ->sin_port == addr_to_port) {
       // Client or Server
       if (sock->state == SS_LISTEN)
@@ -227,16 +228,24 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
           sock->ack_num = seq + 1;
           sock->state = SS_SYNRCVD;
 
+          // std :: cout << "concansok\n";
           Socket *connection_candidate_socket = new Socket;
-          connection_candidate_socket->addr_in->sin_addr = addr_from_ip;
-          connection_candidate_socket->addr_in->sin_port = addr_from_port;
-          connection_candidate_socket->addr_in->sin_family = AF_INET;
+          // **이 connection candidate socket이 server쪽의 accept에서 새로 만들 socket이 될 것. 그래서 addr_in, addr_in_dest순서 바꿨음 (그냥 순서)
+          connection_candidate_socket -> addr_in = new Sockad_in;
+          connection_candidate_socket -> addr_in_dest = new Sockad_in;
+          connection_candidate_socket -> addr_in -> sin_addr = addr_to_ip;
+          connection_candidate_socket -> addr_in -> sin_port = addr_to_port;
+          connection_candidate_socket -> addr_in -> sin_family = AF_INET;
+          connection_candidate_socket -> addr_in_dest -> sin_addr = addr_from_ip;
+          connection_candidate_socket ->addr_in_dest -> sin_port = addr_from_port;
+          connection_candidate_socket -> addr_in_dest -> sin_family = AF_INET;
           connection_candidate_socket->seq_num = ack;
           connection_candidate_socket->ack_num = seq + 1;
-          sock->connection_queue.push_back (connection_candidate_socket);
 
+          sock->connection_queue.push_back (connection_candidate_socket);
           Packet pkt = createPacket (sock, SYN | ACK);
           sendPacket ("IPv4", std::move(pkt));
+          // sock->state = SS_SYNRCVD;
         }
         return;
       }
@@ -260,6 +269,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       {
         if (flag & ACK)
         {
+          // **여기를 왜 오지 않을까...
+          std::cout << "packet server ack\n";
           std::vector <std::pair<UUID, Socket *>>::iterator accept_it;
           for (accept_it = acceptList.begin(); accept_it != acceptList.end(); accept_it++)
           {
@@ -316,9 +327,13 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
 
           if (accept_it == acceptList.end())
           {
+            std::cout << "here\n";
             Socket *connection_candidate_socket = sock->connection_queue.front();
             connection_candidate_socket->addr_in_dest = connection_candidate_socket->addr_in;
-            assignAddress (connection_candidate_socket->addr_in, addr_to_ip, addr_to_port);
+            connection_candidate_socket -> addr_in -> sin_addr = addr_from_ip;
+            connection_candidate_socket -> addr_in -> sin_port = addr_from_port;
+            connection_candidate_socket -> addr_in -> sin_family = AF_INET;
+            // assignAddress (connection_candidate_socket->addr_in, addr_to_ip, addr_to_port);
             connection_candidate_socket->seq_num = ack;
             connection_candidate_socket->ack_num = seq + 1;
 
@@ -329,59 +344,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       }
     }
   }
-
-// --------------
-
-  // std::vector <Socket *>::iterator it;
-  // for (it = socketList.begin(); it != socketList.end(); it++) {
-  //   Socket *sock = *it;
-  //   if ((sock -> addr_in -> sin_addr == addr_to_ip || sock -> addr_in -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in ->sin_port == addr_to_port) {
-  //     if (sock -> addr_in_dest -> sin_addr == 0) {
-  //       // std :: cout << "state : " << sock -> state << "\n";
-  //       sock_found = sock;
-  //       break;
-  //     }
-  //     if ((sock -> addr_in_dest -> sin_addr == addr_from_ip || sock -> addr_in_dest -> sin_addr == htonl(INADDR_ANY)) && sock -> addr_in_dest -> sin_port == addr_from_port) {
-  //       sock_found = sock;
-  //       std :: cout << "got it!\n";
-  //       break;
-  //     }
-  //     else {
-  //       continue;
-  //     }
-  //   }
-  //   else {
-  //     continue;
-  //   }
-  // }
-
-  // if (sock_found == NULL) {
-  //   std::cout << "Not found\n";
-  // }
-  // std::cout << "seq_num : " << sock_found -> seq_num << ", flag : " << flag <<"\n";
-  // switch (sock_found -> state) {
-  //   case SS_LISTEN: {
-  //     std :: cout << "sock ip : " << sock_found -> addr_in -> sin_addr << "\n";
-
-  //     sock_found -> addr_in -> sin_addr = addr_from_ip;
-  //     sock_found -> addr_in -> sin_port = addr_from_port;
-  //     sock_found -> addr_in -> sin_family = AF_INET;
-
-  //     sock_found -> addr_in_dest -> sin_addr = addr_to_ip;
-  //     sock_found -> addr_in_dest -> sin_port = addr_to_port;
-  //     sock_found -> addr_in_dest -> sin_family = AF_INET;
-  //     sock_found -> seq_num = rand();
-  //     sock_found -> ack_num = seq + 1;
-  //     Packet pkt = createPacket(sock_found, SYN + ACK);
-  //     printPacket (std::move(pkt));
-
-  //     this -> sendPacket("IPv4", std::move(pkt));
-  //     break;
-  //   }
-  //   default: {
-  //     break;
-  //   }
-  // }
 }
 
 void TCPAssignment::timerCallback(std::any payload) {
@@ -619,14 +581,17 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid,
     std::cout << "connection queue is empty\n";
     // acceptList에 <syscalluuid, sock> push
     acceptList.push_back (std::pair(syscallUUID, sock));
+    // ** 일단 여기서 return이 block되고 풀리는 곳이 없음.
+    // this -> returnSystemCall(syscallUUID, -1);
     return;
   }
 
   else {
+    std::cout << "connection queue not empty : " << sock -> connection_queue.size() << "\n";
     // 새로 server가 알고있는 client socket 만들기Socket *newSocket = new Socket; (SYNSENT, LISTEN)
     connection_candidate_socket = sock->connection_queue.front();
-    addr_in_client = connection_candidate_socket->addr_in;
-    // sock -> connection_queue.erase(sock -> connection_queue.begin());
+    addr_in_client = connection_candidate_socket->addr_in_dest;
+    sock -> connection_queue.erase(sock -> connection_queue.begin());
     
     if ((fd = createFileDescriptor(pid)) == -1) {
       this -> returnSystemCall(syscallUUID, -1);
@@ -634,12 +599,34 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid,
     }
     connection_candidate_socket->fd = fd;
     connection_candidate_socket->socketUUID = syscallUUID;
+    connection_candidate_socket -> pid = pid;
 
     sock->addr_in_dest = addr_in_client;
+
     sock->seq_num = connection_candidate_socket->seq_num;
     sock->ack_num = connection_candidate_socket->ack_num;
-    Packet pkt = createPacket (sock, (SYN | ACK));
-    sock->state = SS_SYNRCVD;
+
+    // **Accept 함수는 client 쪽의 소켓의 정보를 담는 소켓을 새로 만들기 때문에 만들어서 socketlist에 저장했음
+    socketList.push_back(connection_candidate_socket);
+
+    // **이거 accept 함수가 해야 할 일 빼먹고 있었음
+    sockaddr_in *addr_in = (sockaddr_in *) address;
+    addr_in -> sin_addr.s_addr = sock -> addr_in_dest -> sin_addr;
+    addr_in -> sin_port = sock -> addr_in_dest -> sin_port;
+    addr_in -> sin_family = AF_INET;
+
+    std::cout << "accept UUID at syscall accept: " << syscallUUID 
+              << ", sending to : " << sock -> addr_in_dest -> sin_port
+              << ", seq : " << sock -> seq_num
+              << ", ack : " << sock -> ack_num << std::endl;
+    
+    // ** 여기서 packet을 SYN | ACK로 또 보내는게 맞나?? 위에 SS_LISTEN에서 보냈던 SYN | ACK면 충분하지 않나??
+    // Packet pkt = createPacket (sock, (SYN | ACK));
+    // sendPacket("IPv4", std::move(pkt));
+    
+    // ** 나도 여기서 return하는게 맞지 않는거 같긴 한데,,, 주석 풀면 뭔가 되긴 하길래...(바로 아랫줄) 
+    // ** 사실 packet SYN|ACK이나 ACK 받는 과정 중 하나가 잘 안되는 것 같음
+    // returnSystemCall(syscallUUID, fd);
     return;
     
     // newSocket->fd = fd;
@@ -697,6 +684,11 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd,
 
   if (sock == NULL) {
     std :: cout << "e1\n";
+    this -> returnSystemCall(syscallUUID, -1);
+    return;
+  }
+
+  if (sock -> addr_in -> sin_family == AF_INET) {
     this -> returnSystemCall(syscallUUID, -1);
     return;
   }
