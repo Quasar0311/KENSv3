@@ -230,6 +230,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
           Packet pkt = createPacket (sock, ACK);
           sendPacket ("IPv4", std::move(pkt));
           sock->state = SS_CONNECTED;
+          this -> returnSystemCall(sock -> socketUUID, 0);
         }
         return;
       }
@@ -534,6 +535,7 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid,
   this -> sendPacket("IPv4", std::move(packet));
   
   sock -> state = SS_SYNSENT;
+  sock -> socketUUID = syscallUUID;
   listenList.push_back (sock);
   sock -> seq_num++;
 
