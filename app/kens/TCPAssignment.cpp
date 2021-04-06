@@ -208,11 +208,16 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
           }
           // 없으면, connection_queue에 넣어주면 됨
           sockaddr_in *addr_in_src = new sockaddr_in;
+          addr_in_src -> sin_family = AF_INET;
           addr_in_src->sin_addr.s_addr = addr_from_ip;
           addr_in_src->sin_port = addr_from_port;
-          addr_in_src->sin_family = AF_INET;
+
+          std::cout << "conqueue push addr : " << addr_from_ip
+                    << " port : " << addr_in_src -> sin_port
+                    << " fam : " << addr_in_src -> sin_family << "\n";
 
           sock->connection_queue.push_back (addr_in_src);
+          
         }
         return;
       }
@@ -262,15 +267,23 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
               newSocket->seq_num = 0;
               newSocket->connection_queue = std::vector <sockaddr_in *>();
 
-              socketList.push_back(newSocket);
-
-              sockaddr_in *addr_in_dest = new sockaddr_in;
-              addr_in_dest -> sin_addr.s_addr = addr_from_ip;
-              addr_in_dest -> sin_port = addr_from_port;
-              addr_in_dest -> sin_family = AF_INET;
-              newSocket->addr_in_dest = addr_in_dest;
+              newSocket -> addr_in_dest -> sin_addr = addr_from_ip;
+              newSocket -> addr_in_dest -> sin_port = addr_from_port;
+              newSocket -> addr_in_dest -> sin_family = AF_INET;
 
               // TODO: newSocket->addr_in 에 Host() 정보
+              newSocket -> addr_in -> sin_addr = addr_to_ip;
+              newSocket -> addr_in -> sin_port = addr_to_port;
+              newSocket -> addr_in -> sin_family = AF_INET;
+
+              socketList.push_back(newSocket);
+
+              std::cout << "before accept ends\n";
+              
+              std::cout << "server side socket addr1 : " << sock -> addr_in -> sin_addr
+                        << " server side socket addr2 : " << sock -> addr_in_dest -> sin_addr
+                        << " server side port 1 : " << sock -> addr_in -> sin_port
+                        << " server side port 2 : " << sock -> addr_in_dest -> sin_port << std::endl;
               
               pair.second->state = SS_CONNECTED;
               this -> returnSystemCall(pair.first, fd);
@@ -596,7 +609,23 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid,
 
     // newSocket->addr_in = (Sockad_in *) addr_in_client;
     // TODO: newSocket->addr_in 에 Host() 정보
-    newSocket->addr_in_dest = (Sockad_in*) addr_in_client;
+    // newSocket->addr_in = (Sockad_in*) addr_in_client;
+    // 맨 처음 client 측에서 만든 addr 정보가 다시 서버로 넘어왔고, 서버 측에서 새로 만든 소켓에서
+    // addr_in은 서버 측의 정보, addr_in_dest는 맨 처음 client 측의 addr 정보가 될 것이다.
+    newSocket -> addr_in -> sin_addr = sock -> addr_in -> sin_addr;
+    newSocket -> addr_in -> sin_port = sock -> addr_in -> sin_port;
+    newSocket -> addr_in -> sin_family = AF_INET;
+
+    newSocket -> addr_in_dest -> sin_addr = addr_in_client -> sin_addr.s_addr;
+    newSocket -> addr_in_dest -> sin_port = addr_in_client -> sin_port;
+    newSocket -> addr_in_dest -> sin_family = AF_INET;
+    // newSocket -> addr_in -> sin_family = AF_INET;
+    std::cout << "sin_family: " << newSocket->addr_in->sin_family
+              << " sin_port: " << newSocket->addr_in->sin_port
+              << " sin_addr: " << newSocket->addr_in->sin_addr 
+              << " ser sin_fam: " << sock -> addr_in -> sin_family
+              << " ser port: " << sock -> addr_in -> sin_port
+              << " ser addr: " << sock -> addr_in -> sin_addr << std::endl;
     socketList.push_back(newSocket);
 
     sock->state = SS_CONNECTED;
@@ -604,10 +633,6 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid,
     addr_in -> sin_addr.s_addr = newSocket -> addr_in_dest -> sin_addr;
     addr_in -> sin_port = newSocket -> addr_in_dest -> sin_port;
     addr_in -> sin_family = AF_INET;
-
-    std::cout << "sin_family: " << newSocket->addr_in->sin_family
-              << " sin_port: " << newSocket->addr_in->sin_port
-              << " sin_addr: " << newSocket->addr_in->sin_addr << std::endl;
     
     this -> returnSystemCall(syscallUUID, fd);
   }
