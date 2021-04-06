@@ -59,6 +59,7 @@ struct Socket
   int type;         /* SOCK_STREAM */
   int protocol;     /* PROTOCOLS */
   int connected;
+  int backlog;
 
   uint32_t seq_num;
   uint32_t ack_num;
@@ -66,7 +67,7 @@ struct Socket
   struct Sockad_in *addr_in;
   struct Sockad_in *addr_in_dest;
 
-  std::vector <sockaddr_in *> connection_queue;
+  std::vector <Socket *> connection_queue;
 };
 
 class TCPAssignment : public HostModule,
@@ -110,6 +111,7 @@ public:
   void syscall_getpeername(UUID syscallUUID, int pid, int param1,
                            struct sockaddr *param2,
                            socklen_t *param3);
+  Sockad_in *assignAddress(Sockad_in *sockad_in, uint32_t ip, in_port_t port);
 
   void printPacket (Packet &&packet);
 
