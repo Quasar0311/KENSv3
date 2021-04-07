@@ -27,11 +27,28 @@ TCPAssignment::~TCPAssignment() {}
 
 void TCPAssignment::initialize()
 {
-  sockList = std::array<struct Socket *, MAX_SOCKETS> ();
-  sockList.fill (nullptr);
+  socketList = std::vector <Socket *>();
+  listenList = std::vector <Socket *>();
+  acceptList = std::vector <Socket *>();
 }
 
 void TCPAssignment::finalize() {}
+
+Socket * TCPAssignment::getSocket (int pid, int fd)
+{
+  std::vector <Socket *>::iterator i;
+  for (i = socketList.begin(); i != socketList.end(); i++)
+  {
+    Socket *s = (*i);
+    if (s->pid == pid && s->fd == fd)
+    {
+      return s;
+    } 
+  }
+  return nullptr;
+}
+
+
 
 void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
                                    const SystemCallParameter &param) {
@@ -57,13 +74,13 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     (socklen_t)param.param3_int);
     break;
   case LISTEN:
-    //this->syscall_listen(syscallUUID, pid, param.param1_int,
-    //param.param2_int);
+    this->syscall_listen(syscallUUID, pid, param.param1_int,
+    param.param2_int);
     break;
   case ACCEPT:
-    //this->syscall_accept(syscallUUID, pid, param.param1_int,
-    //		static_cast<struct sockaddr*>(param.param2_ptr),
-    //		static_cast<socklen_t*>(param.param3_ptr));
+    this->syscall_accept(syscallUUID, pid, param.param1_int,
+    		static_cast<struct sockaddr*>(param.param2_ptr),
+    		static_cast<socklen_t*>(param.param3_ptr));
     break;
   case BIND:
     this->syscall_bind(syscallUUID, pid, param.param1_int,
@@ -86,9 +103,190 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
 }
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
-  // Remove below
-  (void)fromModule;
-  (void)packet;
+  uint32_t ip_src;
+  uint32_t ip_dst;
+  uint16_t port_src;
+  uint16_t port_dst;
+  uint16_t checksum;
+
+  uint32_t seq;
+  uint32_t ack;
+  uint8_t head_len;
+  uint8_t flag;
+  
+  // uint16_t window;
+  packet.readData(14 + 12, &ip_src, 4);
+  packet.readData(14 + 16, &ip_dst, 4);
+
+  packet.readData(34 + 16, &checksum, 2);
+  uint8_t tcp_seg_buf[20];
+  uint16_t checksum_cal = NetworkUtil::tcp_sum(ip_src, ip_dst, tcp_seg_buf, 20);
+  // TODO: quit if checksum wrong
+
+  packet.readData(34, &port_src, 2);
+  packet.readData(34 + 2, &port_dst, 2);
+
+  packet.readData(34 + 4, &seq, 4);
+  packet.readData(34 + 8, &ack, 4);
+  packet.readData(34 + 12, &head_len, 1);
+  packet.readData(34 + 13, &flag, 1);
+
+  ip_src = ntohl(ip_src);
+  port_src = ntohs(port_src);
+  ip_dst = ntohl(ip_dst);
+  port_dst = ntohs(port_dst);
+
+  seq = ntohl(seq);
+  ack = ntohl(ack);
+  
+  Socket *sock = nullptr;
+  std::vector <Socket *>::iterator it;
+  for (it = listenList.begin(); it != listenList.end(); it++)
+  {
+    sock = *it;
+    if (isMatchingAddr (sock, ip_dst, port_dst))
+    {
+      if (sock->state == SS_LISTEN)
+      {
+        if (flag & SYN)
+        {
+          if (sock->connection_queue.size() >= sock->backlog)
+          {
+            return;
+          }
+          Socket *sock_con = new Socket;
+          sock_con->addr_in_dst = new Sockad_in;
+          sock_con->addr_in_src = new Sockad_in;
+          sock_con->addr_in_dst->sin_family = AF_INET;
+          sock_con->addr_in_dst->sin_port = port_src;
+          sock_con->addr_in_dst->sin_addr = ip_src;
+          sock_con->addr_in_src->sin_family = AF_INET;
+          sock_con->addr_in_src->sin_port = port_dst;
+          sock_con->addr_in_src->sin_addr = ip_dst;
+          sock_con->seq = ack;
+          sock_con->ack = seq + 1;
+          sock->connection_queue.push_back (sock_con);
+          return;
+        }
+      }
+      if (sock->state == SS_ACCEPT)
+      {
+        if (flag & SYN)
+        {
+          Socket *sock_con = new Socket;
+          sock_con->addr_in_dst = new Sockad_in;
+          sock_con->addr_in_src = new Sockad_in;
+          sock_con->addr_in_dst->sin_family = AF_INET;
+          sock_con->addr_in_dst->sin_port = port_src;
+          sock_con->addr_in_dst->sin_addr = ip_src;
+          sock_con->addr_in_src->sin_family = AF_INET;
+          sock_con->addr_in_src->sin_port = port_dst;
+          sock_con->addr_in_src->sin_addr = ip_dst;
+          sock_con->seq = ack;
+          sock_con->ack = seq + 1;
+          sock_con->pid = sock->pid;
+          sock->sock_con = sock_con;
+
+          Packet pkt = createPacket (sock_con, SYN | ACK);
+          sendPacket ("IPv4", std::move (pkt));
+          sock->state = SS_SYNRCVD;
+          return;
+        }
+      }
+      if (sock->state == SS_SYNSENT)
+      {
+        if (flag & (SYN | ACK))
+        {
+          sock->seq = ack;
+          sock->ack = seq + 1;
+          Packet pkt = createPacket(sock, ACK);
+          sendPacket ("IPv4", std::move (pkt));
+          listenList.erase(std::find (listenList.begin(), listenList.end(), sock));
+          sock->state = SS_CONNECTED;
+          returnSystemCall (sock->syscallUUID, 0);
+        }
+      }
+      if (sock->state == SS_SYNRCVD)
+      {
+      //   if (flag & SYN)
+      //   {
+
+      //   }
+        if (flag & ACK)
+        {
+          Socket *sock_con = sock->sock_con;
+          int fd;
+          if ((fd = createFileDescriptor (sock_con->pid)) == -1)
+          {
+            delete sock_con->addr_in_src;
+            delete sock_con->addr_in_dst;
+            delete sock_con;
+            returnSystemCall (sock->syscallUUID, -1);
+          }
+          sock_con->fd = fd;
+          socketList.push_back (sock_con);
+          // listenList.push_back (sock_con);
+          // sock_con->seq;
+          // sock_con->ack;
+          sock->state = SS_CONNECTED;
+          sock_con->state= SS_CONNECTED;
+          listenList.erase (std::find (listenList.begin(), listenList.end(), sock));
+          returnSystemCall (sock->syscallUUID, sock_con->fd);
+        }
+      }
+    }
+  }
+}
+
+Packet TCPAssignment::createPacket (Socket *sock, uint8_t flag)
+{
+  Sockad_in *addr_from = sock -> addr_in_src;
+  Sockad_in *addr_to = sock -> addr_in_dst;
+
+  in_addr_t addr_from_ip = (in_addr_t) htonl(addr_from -> sin_addr);
+  in_addr_t addr_to_ip = (in_addr_t) htonl(addr_to -> sin_addr);
+  in_port_t addr_from_port = (in_port_t) htons(addr_from -> sin_port);
+  in_port_t addr_to_port = (in_port_t) htons(addr_to -> sin_port);
+  
+  Packet pkt(54);
+  
+  // ip
+  pkt.writeData(14 + 12, &addr_from_ip, 4);
+  pkt.writeData(14 + 16, &addr_to_ip, 4);
+  pkt.writeData(34, &addr_from_port, 2);
+  pkt.writeData(34 + 2, &addr_to_port, 2);
+
+  uint32_t seq = htonl (sock -> seq);
+  uint32_t ack = htonl (sock -> ack);
+
+
+  pkt.writeData(34 + 4, &seq, 4);
+  pkt.writeData(34 + 8, &ack, 4);
+
+  uint8_t head_len = 80;
+  pkt.writeData(34 + 12, &head_len, 1);
+  pkt.writeData(34 + 13, &flag, 1);
+
+  uint16_t window = htons(65535);
+  pkt.writeData(34 + 14, &window, 2);
+
+  uint8_t tcp_seg_buf[20];
+  uint16_t checksum = NetworkUtil::tcp_sum(addr_from_ip, addr_to_ip, tcp_seg_buf, 20);
+  checksum = htons(~checksum);
+  pkt.writeData(34 + 16, &checksum, 2);
+
+  return pkt;
+}
+
+bool TCPAssignment::isMatchingAddr (Socket *sock, uint32_t ip, uint16_t port)
+{
+  if ((sock->addr_in_src->sin_addr == ip ||
+       sock->addr_in_src->sin_addr == INADDR_ANY) &&
+      (sock->addr_in_src->sin_port == port))
+  {
+    return true;
+  }
+  return false;
 }
 
 void TCPAssignment::timerCallback(std::any payload) {
@@ -96,7 +294,7 @@ void TCPAssignment::timerCallback(std::any payload) {
   (void)payload;
 }
 
-int TCPAssignment::syscall_socket (UUID syscallUUID, int pid,
+void TCPAssignment::syscall_socket (UUID syscallUUID, int pid,
                                    int domain, int type, int protocol)
 {
   int fd;
@@ -104,93 +302,257 @@ int TCPAssignment::syscall_socket (UUID syscallUUID, int pid,
   {
     returnSystemCall (syscallUUID, -1);
   }
-  struct Socket *newSocket = new struct Socket;
-  newSocket->socketUUID = syscallUUID;
-  newSocket->fd = fd;
-  newSocket->pid = pid;
-  newSocket->domain = domain;
-  newSocket->type = type;
-  newSocket->protocol = protocol;
-  sockList[fd] = newSocket;
 
+  Socket *sock = new Socket;
+  sock->syscallUUID = syscallUUID;
+  sock->fd = fd;
+  sock->pid = pid;
+  sock->domain = domain;
+  sock->type = type;
+  sock->protocol = protocol;
+  sock->state = SS_FREE;
+  sock->seq = 0;
+  sock->ack = 0;
+  sock->backlog = 0;
+
+  sock->addr_in_src = nullptr;
+  sock->addr_in_dst = nullptr;
+  sock->connection_queue = std::vector <Socket *>();
+  sock->sock_con = nullptr;
+
+  socketList.push_back (sock);
   returnSystemCall (syscallUUID, fd);
 }
 
-int TCPAssignment::syscall_bind (UUID syscallUUID, int pid,
+// address: network order
+void TCPAssignment::syscall_bind (UUID syscallUUID, int pid,
                                  int fd, struct sockaddr *address,
                                  socklen_t address_len)
 {
-  struct Socket *sock;
-  struct sockaddr_in addr;
-  int err = -1;
-
-  /* Lookup the socket list. */
-  sock = SockfdLookup (fd);
-  if (sock)
+  Socket *sock = getSocket (pid, fd);
+  Sockad_in *_addr = (Sockad_in *) address;
+  
+  if (sock == nullptr)
   {
-    memcpy (address, &addr, address_len);
-    *(struct sockaddr_in *)sock = addr;
+    returnSystemCall (syscallUUID, -1);
   }
-  /*
-  Possible error cases of bind()?
-  */
-  returnSystemCall (syscallUUID, err);
+  if (sock->state != SS_FREE)
+  {
+    returnSystemCall (syscallUUID, -1);
+  }
+  
+  std::vector <Socket *>::iterator i;
+  for (i = socketList.begin(); i != socketList.end(); i++)
+  {
+    Socket *s = (*i);
+    if (s->addr_in_src != NULL)
+    {
+      if (s->addr_in_src->sin_port == ntohs (_addr->sin_port))
+      {
+        if (s->addr_in_src->sin_addr == INADDR_ANY
+            || s->addr_in_src->sin_addr == ntohs (_addr->sin_addr))
+        {
+          returnSystemCall (syscallUUID, -1); 
+        }
+      }
+    }
+  }
+
+  // new object not created in socket()
+  sock->addr_in_src = new Sockad_in;
+  sock->addr_in_dst = new Sockad_in;
+  sock->addr_in_src->sin_family = AF_INET;
+  sock->addr_in_src->sin_port = ntohs (_addr->sin_port);
+  sock->addr_in_src->sin_addr = ntohl (_addr->sin_addr);
+  sock->state = SS_BIND;
+  returnSystemCall (syscallUUID, 0);
 }
 
-int TCPAssignment::syscall_getsockname (UUID syscallUUID, int pid,
+void TCPAssignment::syscall_getsockname (UUID syscallUUID, int pid,
                                         int fd, struct sockaddr *address,
                                         socklen_t *address_len)
 {
-  struct Socket *sock;
-  int err = -1;
+  Socket *sock = getSocket (pid, fd);
+  Sockad_in *_addr = (Sockad_in *) address;
 
-  sock = SockfdLookup (fd);
-  if (sock)
+  if (sock == nullptr)
   {
-    *address = sock->saddr;
-    *address_len = sizeof (sock->saddr);
-    err = 0;
+    returnSystemCall (syscallUUID, -1);
+  }
+  if (sock->addr_in_src == nullptr)
+  {
+    returnSystemCall (syscallUUID, -1);
   }
 
-  returnSystemCall (syscallUUID, err);
+  _addr->sin_family = sock->addr_in_src->sin_family;
+  _addr->sin_port = htons (sock->addr_in_src->sin_port);
+  _addr->sin_addr = htonl (sock->addr_in_src->sin_addr);
+  *address_len = sizeof (Sockad_in);
+  returnSystemCall (syscallUUID, 0);
 }
 
-int TCPAssignment::syscall_connect (UUID syscallUUID, int pid,
+void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, 
+                                   int sockfd, int backlog) 
+{
+  Socket *sock = getSocket (pid, sockfd);
+
+  if (sock == nullptr)
+  {
+    returnSystemCall (syscallUUID, -1);
+  }
+  if (sock -> state != SS_BIND)
+  {
+    returnSystemCall (syscallUUID, -1);
+  }
+
+  sock->backlog = backlog;
+  listenList.push_back (sock);
+  sock->state = SS_LISTEN;
+  returnSystemCall (syscallUUID, 0);
+}
+
+void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, 
+                                   int fd, struct sockaddr *address, socklen_t *address_len) 
+{
+  Socket *sock = getSocket (pid, fd);
+
+  if (sock == nullptr)
+  {
+    returnSystemCall (syscallUUID, -1);
+  }
+  if (sock->state != SS_LISTEN)
+  {
+    returnSystemCall (syscallUUID, -1);
+  }
+
+  // connect after accept
+  if (sock->connection_queue.empty())
+  {
+    sock->state = SS_ACCEPT;
+    return;
+  }
+  // connect before accept
+  else
+  {
+    Socket *sock_con = sock->connection_queue.front();
+    sock->connection_queue.erase (sock->connection_queue.begin());
+    sock->sock_con = sock_con;
+    Packet pkt = createPacket (sock_con, SYN | ACK);
+    sock->state = SS_SYNRCVD;
+    sock->syscallUUID = syscallUUID;
+    sendPacket ("IPv4", std::move (pkt));
+    return;
+  }
+}     
+
+void TCPAssignment::syscall_connect (UUID syscallUUID, int pid,
                                     int sockfd, struct sockaddr *address,
                                     socklen_t address_len)
 {
-
-}
-
-int TCPAssignment::syscall_close (UUID syscallUUID, int pid,
-                                  int fildes)
-{
-  struct Socket *sock = SockfdLookup (fildes);
-  int err = -1;
-
-  if (sock)
+  Socket *sock = getSocket (pid, sockfd);
+  Sockad_in *_addr = (Sockad_in *) address;
+  Sockad_in *server_addr = new Sockad_in;
+  if (sock == nullptr)
   {
-    /* Close and deallocate */
-    delete sock;
-    sockList[fildes] = nullptr;
-    err = 0;
+    returnSystemCall (syscallUUID, -1);
+  }
+  if (sock->state != SS_BIND)
+  {
+    returnSystemCall (syscallUUID, -1);
   }
 
-  returnSystemCall (syscallUUID, err);
+  // sock->addr_in_dst is already allocated
+  server_addr->sin_family = AF_INET;
+  server_addr->sin_port = ntohs (_addr->sin_port);
+  server_addr->sin_addr = ntohs (_addr->sin_addr);
+  sock->addr_in_dst->sin_family = AF_INET;
+  sock->addr_in_dst->sin_port = ntohs (_addr->sin_port);
+  sock->addr_in_dst->sin_addr = ntohs (_addr->sin_addr);
+
+  int dst_port;
+  in_port_t local_port;
+  uint32_t local_ip;
+  std::optional<ipv4_t> local_ipv4;
+  std::vector <Socket *>::iterator it;
+  
+  ipv4_t ip_dest;
+  // std::memcpy(&ip_dest, (void *) &address_in -> sin_addr, 4);
+  ip_dest = NetworkUtil::UINT64ToArray<4>(server_addr -> sin_addr);
+  
+  // std::optional<ipv4_t> ip = getHost() -> getIPAddr()
+
+  dst_port = getHost() -> getRoutingTable(ip_dest);
+  local_ipv4 = this -> getHost() -> getIPAddr(dst_port);
+  
+  // std::memcpy(&local_ip, (void *) &local_ipv4, 4);
+  local_ip = NetworkUtil::arrayToUINT64<4>(local_ipv4.value());
+
+  while (true) {
+    int iter = 0;
+    local_port = rand() % 65536;
+    for (it = socketList.begin(); it != socketList.end(); it++) {
+      Socket *socket_temp = (*it);
+      if (socket_temp -> addr_in_src -> sin_port == local_port) {
+        if (socket_temp -> addr_in_src -> sin_addr == ntohs(INADDR_ANY)
+            || socket_temp -> addr_in_src -> sin_addr == local_ip) 
+        {
+          iter = 1;
+          break;
+        }
+      }
+    }
+    if (iter == 0) {
+      break;
+    }
+  }
+
+  sock->addr_in_src->sin_family = AF_INET;
+  sock->addr_in_src->sin_port = local_port;
+  // sock->addr_in_src->sin_addr = ntohs (local_ip);
+  sock->addr_in_src->sin_addr = local_ip;
+  sock->seq = rand();
+  sock->ack = 0;
+
+  Packet pkt = createPacket (sock, SYN);
+  listenList.push_back (sock);
+  sock->state = SS_SYNSENT;
+  // for syscallreturn (connect, ...)
+  sock->syscallUUID = syscallUUID;
+  sendPacket ("IPv4", std::move (pkt));
+  return;
 }
 
-struct Socket * TCPAssignment::SockfdLookup (int fd)
+void TCPAssignment::syscall_close (UUID syscallUUID, int pid,
+                                  int fd)
 {
-  return sockList[fd] == nullptr ? nullptr : sockList[fd];
-}
+  Socket *sock = getSocket (pid, fd);
+  Socket *s;
 
-struct sockaddr * NewSockAddr (uint32_t ip, uint16_t port)
-{
-  struct sockaddr *addr = (struct sockaddr *) malloc (sizeof (struct sockaddr));
-  ((sockaddr_in *)addr)->sin_family = AF_INET;
-  ((sockaddr_in *)addr)->sin_addr.s_addr = ip;
-  ((sockaddr_in *)addr)->sin_port = port;
-  return addr;
+  if (sock == nullptr)
+  {
+    returnSystemCall (syscallUUID, -1);
+  }
+
+  std::vector <Socket *>::iterator i;
+  for (i = socketList.begin(); i != socketList.end(); )
+  {
+    sock = *i;
+    if (sock->pid == pid && sock->fd == fd)
+    {
+      s = sock;
+      socketList.erase (i);
+    }
+    else
+    {
+      i++;
+    }
+  }
+
+  delete s->addr_in_src;
+  delete s->addr_in_dst;
+  delete s;
+  removeFileDescriptor (pid, fd);
+  returnSystemCall (syscallUUID, 1);
 }
 
 } // namespace E

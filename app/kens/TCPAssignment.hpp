@@ -23,26 +23,55 @@
 
 namespace E {
 
+const uint8_t FIN = 1;
+const uint8_t SYN = 2;
+const uint8_t RST = 4;
+const uint8_t PSH = 8;
+const uint8_t ACK = 16;
+const uint8_t URG = 32;
+
 typedef enum
 {
   SS_FREE = 0,
-  SS_UNCONNECTED,
-  SS_CONNECTING,
+  SS_BIND,
+  SS_LISTEN,
+  SS_SYNSENT,
+  SS_ACCEPT,
+  SS_SYNRCVD,
   SS_CONNECTED,
   SS_DISCONNECTING
 } socket_state;
 
+struct Sockad_in
+{
+  sa_family_t sin_family;
+  in_port_t sin_port;
+  uint32_t sin_addr;
+  char sin_zero[8];
+};
+
 struct Socket
 {
-  UUID socketUUID;
+  // Everything in HOST ORDER
+  UUID syscallUUID;
   socket_state state;
   int fd;
   int pid;
   int domain;       /* AF_INET */
-  short type;         /* SOCK_STREAM */
+  int type;         /* SOCK_STREAM */
   int protocol;     /* PROTOCOLS */
-  int connected;
-  struct sockaddr saddr;
+  int backlog;
+  std::vector <Socket *> connection_queue;
+  
+  uint32_t seq;
+  uint32_t ack;
+
+  // Address info used when creating a packet
+  struct Sockad_in *addr_in_src;
+  struct Sockad_in *addr_in_dst;
+
+  // ONLY for accept
+  Socket * sock_con;
 };
 
 class TCPAssignment : public HostModule,
@@ -60,27 +89,36 @@ public:
   virtual void finalize();
   virtual ~TCPAssignment();
 
+  Socket * getSocket (int pid, int fd);
+  Packet createPacket (Socket *sock, const uint8_t flag);
+
 protected:
   virtual void systemCallback(UUID syscallUUID, int pid,
                               const SystemCallParameter &param) final;
   virtual void packetArrived(std::string fromModule, Packet &&packet) final;
 
-  virtual int syscall_socket (UUID syscallUUID, int pid,
+  virtual void syscall_socket (UUID syscallUUID, int pid,
                               int domain, int type, int protocol);
-  virtual int syscall_bind (UUID syscallUUID, int pid,
+  virtual void syscall_bind (UUID syscallUUID, int pid,
                                            int socket, struct sockaddr *address,
                                            socklen_t address_len);
-  virtual int syscall_getsockname (UUID syscallUUID, int pid,
+  virtual void syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog);
+  virtual void syscall_accept(UUID syscallUUID, int pid, int sockfd,
+    		              struct sockaddr *address,
+    		              socklen_t *address_len);
+  virtual void syscall_getsockname (UUID syscallUUID, int pid,
                                    int sockfd, struct sockaddr *address,
                                    socklen_t *address_len);
-  virtual int syscall_connect (UUID syscallUUID, int pid,
+  virtual void syscall_connect (UUID syscallUUID, int pid,
                                int sockfd, struct sockaddr *address,
                                socklen_t address_len);
-  virtual int syscall_close (UUID syscallUUID, int pid,
+  virtual void syscall_close (UUID syscallUUID, int pid,
                              int fildes);
-  virtual struct Socket * SockfdLookup (int fd);
+  bool isMatchingAddr (Socket *sock, uint32_t ip, uint16_t port);
 
-  std::array <struct Socket *, MAX_SOCKETS> sockList;
+  std::vector <Socket *> socketList;
+  std::vector <Socket *> listenList;
+  std::vector <Socket *> acceptList;
 };
 
 class TCPAssignmentProvider {
