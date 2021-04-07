@@ -61,7 +61,9 @@ struct Socket
   int type;         /* SOCK_STREAM */
   int protocol;     /* PROTOCOLS */
   int backlog;
-  std::vector <Socket *> connection_queue;
+  Sockad_in *accept_waiting;
+  std::vector <Socket *> complete_queue;
+  std::vector <Socket *> incomplete_queue;
   
   uint32_t seq;
   uint32_t ack;
@@ -114,7 +116,11 @@ protected:
                                socklen_t address_len);
   virtual void syscall_close (UUID syscallUUID, int pid,
                              int fildes);
+  virtual void syscall_getpeername (UUID syscallUUID, int pid,
+            int fd, struct sockaddr *address,
+            socklen_t *address_len);
   bool isMatchingAddr (Socket *sock, uint32_t ip, uint16_t port);
+  bool isMatchingAddrDst (Socket *sock, uint32_t ip, uint16_t port);
 
   std::vector <Socket *> socketList;
   std::vector <Socket *> listenList;
