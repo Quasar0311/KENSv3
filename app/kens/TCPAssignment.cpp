@@ -61,12 +61,12 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     this->syscall_close(syscallUUID, pid, param.param1_int);
     break;
   case READ:
-    //this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr,
-    //param.param3_int);
+    this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr,
+    param.param3_int);
     break;
   case WRITE:
-    //this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr,
-    //param.param3_int);
+    this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr,
+    param.param3_int);
     break;
   case CONNECT:
     this->syscall_connect(syscallUUID, pid, param.param1_int,
@@ -784,6 +784,42 @@ void TCPAssignment::syscall_close (UUID syscallUUID, int pid,
   removeFileDescriptor (pid, fd);
   returnSystemCall (syscallUUID, 1);
   return;
+}
+
+void TCPAssignment::syscall_read (UUID syscallUUID, int pid,
+                                  int sockfd, void *buf, size_t count) 
+{
+  Socket *sock = getSocket(pid, sockfd);
+
+  if (sock == nullptr) {
+    returnSystemCall(syscallUUID, -1);
+    return;
+  }
+
+  if (count == 0) {
+    returnSystemCall(syscallUUID, 0);
+    return;
+  }
+
+  // if ()
+
+}
+
+void TCPAssignment::syscall_write (UUID syscallUUID, int pid,
+                                  int sockfd, const void *buf, size_t count) 
+{
+  Socket *sock = getSocket(pid, sockfd);
+
+  if (sock == nullptr) {
+    returnSystemCall(syscallUUID, -1);
+    return;
+  }
+
+  if (count == 0)  {
+    returnSystemCall(syscallUUID, 0);
+    return;
+  }
+
 }
 
 } // namespace E

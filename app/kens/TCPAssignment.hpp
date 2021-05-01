@@ -116,6 +116,10 @@ protected:
                                socklen_t address_len);
   virtual void syscall_close (UUID syscallUUID, int pid,
                              int fildes);
+  virtual void syscall_read (UUID syscallUUID, int pid,
+                            int sockfd, void *buf, size_t count);
+  virtual void syscall_write (UUID syscallUUID, int pid,
+                            int sockfd, const void *buf, size_t count);
   virtual void syscall_getpeername (UUID syscallUUID, int pid,
             int fd, struct sockaddr *address,
             socklen_t *address_len);
