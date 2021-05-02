@@ -50,6 +50,18 @@ struct Sockad_in
   char sin_zero[8];
 };
 
+struct TCPlayer
+{
+  void *send_buf;
+  std::vector <Packet> send_buf;
+  int window_size;
+  int send_base;
+
+  void *recv_buf;
+  std::vector <Packet> recv_buf;
+  int rcv_base;
+};
+
 struct Socket
 {
   // Everything in HOST ORDER
