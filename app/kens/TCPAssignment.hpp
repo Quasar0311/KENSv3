@@ -20,6 +20,7 @@
 #include <E/E_Common.hpp>
 
 #define MAX_SOCKETS 1 << 16
+#define MAX_PAYLOAD_SIZE 1460
 
 namespace E {
 
@@ -50,18 +51,6 @@ struct Sockad_in
   char sin_zero[8];
 };
 
-struct TCPlayer
-{
-  void *send_buf;
-  std::vector <Packet> send_buf;
-  int window_size;
-  int send_base;
-
-  void *recv_buf;
-  std::vector <Packet> recv_buf;
-  int rcv_base;
-};
-
 struct Socket
 {
   // Everything in HOST ORDER
@@ -74,6 +63,7 @@ struct Socket
   int protocol;     /* PROTOCOLS */
   int backlog;
   Sockad_in *accept_waiting;
+  void *read_waiting;
   std::vector <Socket *> complete_queue;
   std::vector <Socket *> incomplete_queue;
   
@@ -86,6 +76,14 @@ struct Socket
 
   // ONLY for accept
   Socket * sock_con;
+
+  std::vector <void *> send_bufs;
+  std::vector <void *> recv_bufs;
+  int send_base;
+  int recv_base;
+  int window_size;
+  int spare_bytes;
+  const void * write_waiting;
 };
 
 class TCPAssignment : public HostModule,
