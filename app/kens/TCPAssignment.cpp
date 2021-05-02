@@ -61,12 +61,12 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     this->syscall_close(syscallUUID, pid, param.param1_int);
     break;
   case READ:
-    //this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr,
-    //param.param3_int);
+    this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr,
+    param.param3_int);
     break;
   case WRITE:
-    //this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr,
-    //param.param3_int);
+    this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr,
+    param.param3_int);
     break;
   case CONNECT:
     this->syscall_connect(syscallUUID, pid, param.param1_int,
@@ -103,6 +103,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
 }
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
+  uint16_t ip_length;
   uint32_t ip_src;
   uint32_t ip_dst;
   uint16_t port_src;
@@ -115,6 +116,10 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   uint8_t flag;
   
   uint16_t window;
+  std::array <char, 1460> data;
+  uint32_t data_length;
+
+  packet.readData(14 + 2, &ip_length, 2);
   packet.readData(14 + 12, &ip_src, 4);
   packet.readData(14 + 16, &ip_dst, 4);
 
@@ -138,6 +143,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   packet.readData(34 + 13, &flag, 1);
   packet.readData(34 + 14, &window, 2);
 
+  ip_length = ntohs (ip_length);
   ip_src = ntohl(ip_src);
   port_src = ntohs(port_src);
   ip_dst = ntohl(ip_dst);
@@ -147,6 +153,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   seq = ntohl(seq);
   ack = ntohl(ack);
   
+  // A data packet
+  // FIXED IP header 20 bytes, TCP header 20 bytes 
+  if (ip_length - 40 > 0)
+  {
+    packet.readData (54, &data, ip_length - 40);
+    data_length = ip_length - 40;
+  }
+
   Socket *sock = nullptr;
   std::vector <Socket *>::iterator it;
   for (it = listenList.begin(); it != listenList.end(); it++)
@@ -366,6 +380,28 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
         }
         return;
       }
+      if (sock->state == SS_CONNECTED)
+      {
+        if (flag == (SYN | ACK))
+        {
+          if (sock->read_waiting != nullptr)
+          {
+            memcpy (sock->read_waiting, &data, data_length);
+            returnSystemCall (sock->syscallUUID, data_length);
+            return;
+          }
+          else
+          {
+            sock->recv_bufs.push_back (packet);
+            sock->seq = ack;
+            sock->ack = seq + data_length;
+            Packet pkt = createPacket (sock, SYN | ACK);
+            sendPacket ("IPv4", std::move(pkt));
+            return;
+          }
+        }
+        return;
+      }
     }
   }
 }
@@ -462,6 +498,7 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid,
   sock->ack = 0;
   sock->backlog = 0;
   sock->accept_waiting = nullptr;
+  sock->read_waiting = nullptr;
 
   sock->addr_in_src = nullptr;
   sock->addr_in_dst = nullptr;
@@ -785,5 +822,32 @@ void TCPAssignment::syscall_close (UUID syscallUUID, int pid,
   returnSystemCall (syscallUUID, 1);
   return;
 }
+void TCPAssignment::syscall_read (UUID syscallUUID, int pid,
+                                  int fd, void *buf, size_t count)
+{
+  Socket *sock = getSocket (pid, fd);
 
+  if (sock == nullptr)
+  {
+
+  }
+  assert (sock->state = SS_CONNECTED);
+  // 1. If there is already received data in the corresponding TCP socket's
+  // receive buffer, the data is copied to the application's buffer
+  // and the call returns immediately.
+
+  // 2. If there is no received data, the call blocks until any data is received
+  // from the sender. When data arrives, the data is copied to the application's
+  // buffer and the call returns.
+
+  if (sock->recv_bufs.empty())
+  {
+
+  }
+  else
+  {
+    auto recv_buf = sock->recv_bufs.front();
+    memcpy (buf, recv_buf, )
+  }
+}
 } // namespace E

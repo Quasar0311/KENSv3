@@ -62,6 +62,7 @@ struct Socket
   int protocol;     /* PROTOCOLS */
   int backlog;
   Sockad_in *accept_waiting;
+  Sockad_in *read_waiting;
   std::vector <Socket *> complete_queue;
   std::vector <Socket *> incomplete_queue;
   
@@ -74,6 +75,11 @@ struct Socket
 
   // ONLY for accept
   Socket * sock_con;
+
+  // Receive buffer
+  std::vector <E::Packet> recv_bufs;
+  // Send buffer
+  std::vector <E::Packet> send_bufs;
 };
 
 class TCPAssignment : public HostModule,
@@ -119,6 +125,10 @@ protected:
   virtual void syscall_getpeername (UUID syscallUUID, int pid,
             int fd, struct sockaddr *address,
             socklen_t *address_len);
+  virtual void syscall_read (UUID syscallUUID, int pid, 
+                            int fd, void *buf, size_t count);
+  virtual void syscall_write (UUID syscallUUID, int pid, 
+                              int fd, void *buf, size_t count);
   bool isMatchingAddr (Socket *sock, uint32_t ip, uint16_t port);
   bool isMatchingAddrDst (Socket *sock, uint32_t ip, uint16_t port);
 
