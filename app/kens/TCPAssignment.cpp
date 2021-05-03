@@ -153,10 +153,10 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   ack = ntohl(ack);
   
   // If data packet
-  if (ip_length > 54)
+  if (ip_length > 40)
   {
-    payload = malloc (ip_length - 54);
-    packet.readData (54, payload, ip_length);
+    payload = malloc (ip_length - 40);
+    packet.readData (54, payload, ip_length - 40);
   }
 
   Socket *sock = nullptr;
@@ -382,28 +382,49 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       {
         if (flag & ACK)
         {
-          // Data packet, Not ACK
-          if (ip_length > 54)
+          if (ip_length > 40)
           {
-            sock->seq = ack;
-            sock->ack = seq + ip_length - 54;
-            Packet pkt = createPacket(sock, ACK);
-            sendPacket ("IPv4", std::move(pkt));
-            if (sock->read_waiting != nullptr)
+            if (sock->expectedseqnum == seq)
             {
-              memcpy (sock->read_waiting, payload, ip_length - 54);
-              returnSystemCall (sock->syscallUUID, ip_length - 54);
+              if (sock->read_waiting == nullptr)
+              {
+                memcpy ((char*)sock->receive_window + sock->rw_size, payload, ip_length - 40);
+                sock->expectedseqnum = seq + ip_length - 40;
+                Packet pkt = createPacket (sock, sock->seq, sock->expectedseqnum, nullptr, 0, ACK);
+                sendPacket ("IPv4", std::move(pkt));
+                return;
+              }
+              else
+              {
+                int size = ip_length - 40 > sock->count ? sock->count : ip_length - 40;
+                memcpy (sock->read_waiting, payload, size);
+                sock->expectedseqnum = seq + ip_length - 40;
+                Packet pkt = createPacket (sock, sock->seq, sock->expectedseqnum, nullptr, 0, ACK);
+                sendPacket ("IPv4", std::move(pkt));
+                returnSystemCall (sock->syscallUUID, size);
+                return;
+              }
             }
             else
             {
-              sock->recv_bufs.push_back (payload);
+              Packet pkt = createPacket (sock, sock->seq, sock->expectedseqnum, nullptr, 0, ACK);
+              sendPacket ("IPv4", std::move(pkt)); 
+              return;
             }
             return;
           }
-          // ACK packet
           else
           {
-            
+            auto it = std::next (sock->packet_queue.begin(), sock->sn_base);
+            while (true)
+            {
+              uint32_t tseq;
+              (*it).readData(38, &tseq, 4);
+              if (tseq == ack) break;
+              it++;
+            }
+            int sn_verify = it - sock->packet_queue.begin();
+            sock->sn_base = sn_verify + 1;
             return;
           }
         }
@@ -452,6 +473,56 @@ Packet TCPAssignment::createPacket (Socket *sock, uint8_t flag)
   uint16_t checksum = NetworkUtil::tcp_sum(addr_from_ip, addr_to_ip, tcp_seg, 20);
   checksum = htons(~checksum);
   pkt.writeData(34 + 16, &checksum, 2);
+
+  return pkt;
+}
+
+Packet TCPAssignment::createPacket (Socket *sock, uint32_t _seq, uint32_t _ack, const void *buf, uint16_t length, uint8_t flag)
+{
+  Sockad_in *addr_from = sock -> addr_in_src;
+  Sockad_in *addr_to = sock -> addr_in_dst;
+
+  in_addr_t addr_from_ip = (in_addr_t) htonl(addr_from -> sin_addr);
+  in_addr_t addr_to_ip = (in_addr_t) htonl(addr_to -> sin_addr);
+  in_port_t addr_from_port = (in_port_t) htons(addr_from -> sin_port);
+  in_port_t addr_to_port = (in_port_t) htons(addr_to -> sin_port);
+  
+  Packet pkt(54 + length);
+  
+  // ip
+  uint16_t ip_length = htons(length + 40);
+  pkt.writeData (14 + 2, &ip_length, 2);
+  pkt.writeData(14 + 12, &addr_from_ip, 4);
+  pkt.writeData(14 + 16, &addr_to_ip, 4);
+  pkt.writeData(34, &addr_from_port, 2);
+  pkt.writeData(34 + 2, &addr_to_port, 2);
+
+  uint32_t seq = htonl (_seq);
+  uint32_t ack = htonl (_ack);
+
+
+  pkt.writeData(34 + 4, &seq, 4);
+  pkt.writeData(34 + 8, &ack, 4);
+
+  uint8_t head_len = 0x50;
+  pkt.writeData(34 + 12, &head_len, 1);
+  pkt.writeData(34 + 13, &flag, 1);
+
+  uint16_t window = htons(sock->window_size);
+  pkt.writeData(34 + 14, &window, 2);
+
+  uint16_t zero = 0;
+  pkt.writeData (34 + 16, &zero, 2);
+  uint8_t tcp_seg[20];
+  pkt.readData (14 + 20, tcp_seg, sizeof (tcp_seg));
+  uint16_t checksum = NetworkUtil::tcp_sum(addr_from_ip, addr_to_ip, tcp_seg, 20);
+  checksum = htons(~checksum);
+  pkt.writeData(34 + 16, &checksum, 2);
+
+  if (buf != nullptr || length != 0)
+  {
+    pkt.writeData (54, buf, length);
+  }
 
   return pkt;
 }
@@ -513,6 +584,13 @@ void TCPAssignment::syscall_socket (UUID syscallUUID, int pid,
   sock->incomplete_queue = std::vector <Socket *>();
   sock->complete_queue = std::vector <Socket *>();
   sock->sock_con = nullptr;
+
+  sock->sn = sock->sn_base = sock->sn_nextseqnum = sock->expectedseqnum = 0;
+  sock->rw_size = 0;
+  sock->read_waiting = nullptr;
+  sock->count = 0;
+  sock->receive_window = malloc (51200);
+  sock->packet_queue = std::vector <Packet> ();
 
   socketList.push_back (sock);
   returnSystemCall (syscallUUID, fd);
@@ -846,28 +924,22 @@ void TCPAssignment::syscall_read (UUID syscallUUID, int pid,
     return;
   }
 
-  if (sock->recv_bufs.empty())
+  if (sock->rw_size <= 0)
   {
     sock->read_waiting = buf;
     sock->syscallUUID = syscallUUID;
+    sock->count = count;
     return;
   }
+
   else
   {
-    int pos = 0, size = 0, cnt = count;
-    while (cnt > MAX_PAYLOAD_SIZE)
-    {
-      size = cnt > MAX_PAYLOAD_SIZE ? MAX_PAYLOAD_SIZE : count;
-      void *payload = sock->recv_bufs.front();
-      memcpy (buf + pos, payload, size);
-      cnt -= size;
-      pos += size;
-      sock->recv_bufs.erase (sock->recv_bufs.begin());
-      free (payload);
-    }
-    returnSystemCall (syscallUUID, count);
+    int size = sock->rw_size > (int)count ? (int)count : sock->rw_size;
+    memcpy (buf, sock->receive_window, size);
+    memmove (sock->receive_window, (char *)sock->receive_window + size, sock->rw_size - size);
+    returnSystemCall (syscallUUID, size);
+    return;
   }
-
 }
 
 void TCPAssignment::syscall_write (UUID syscallUUID, int pid,
@@ -885,36 +957,32 @@ void TCPAssignment::syscall_write (UUID syscallUUID, int pid,
     return;
   }
 
-  
-  if (sock->window_size / MAX_PAYLOAD_SIZE < sock->send_bufs.size() +
-                                            ((count / MAX_PAYLOAD_SIZE) + 1))
+  int cnt = count, size = 0, pos = 0;
+  int packet_count = 0;
+  while (cnt > 0)
   {
-    sock->spare_bytes = count;
-    sock->write_waiting = buf;
-    sock->syscallUUID = syscallUUID;
-    return;
-  }
-
-  int pos = 0, size = 0, cnt = count;
-  int packets = 0;
-  while (cnt > MAX_PAYLOAD_SIZE)
-  {
-    size = cnt > MAX_PAYLOAD_SIZE ? MAX_PAYLOAD_SIZE : count;
-    void *payload = malloc (size);
-    memcpy (payload, buf + pos, size);
+    size = cnt > MAX_PAYLOAD_SIZE ? MAX_PAYLOAD_SIZE : cnt;
+    Packet pkt = createPacket (sock, sock->seq, sock->ack, (char *)buf + pos, size, ACK);
+    sock->packet_queue.push_back (pkt);
+    packet_count++;
     cnt -= size;
     pos += size;
-    sock->send_bufs.push_back (payload);
-    packets ++;
-
-    if ((sock->window_size / MAX_PAYLOAD_SIZE) - sock->send_bufs.size() >= packets)
+    sock->seq += size;
+    if (packet_count < sock->window_size)
     {
-      sock->seq += size;
-      Packet pkt = createPacket (sock, ACK);
-      sendPacket ("IPv4", std::move(pkt));
+      break;
     }
   }
-  returnSystemCall (syscallUUID, count);
+
+  auto i = sock->sn_base;
+  while (i < sock->sn_base + sock->window_size)
+  {
+    if (i >= sock->sn_nextseqnum)
+    {
+      sendPacket ("IPv4", std::move(sock->packet_queue[i]));
+      sock->sn_nextseqnum++;
+    }
+  }
 }
 
 } // namespace E

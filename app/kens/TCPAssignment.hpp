@@ -63,7 +63,6 @@ struct Socket
   int protocol;     /* PROTOCOLS */
   int backlog;
   Sockad_in *accept_waiting;
-  void *read_waiting;
   std::vector <Socket *> complete_queue;
   std::vector <Socket *> incomplete_queue;
   
@@ -77,13 +76,16 @@ struct Socket
   // ONLY for accept
   Socket * sock_con;
 
-  std::vector <void *> send_bufs;
-  std::vector <void *> recv_bufs;
-  int send_base;
-  int recv_base;
+  std::vector <Packet> packet_queue;
+  int sn;
+  int sn_base;
+  int sn_nextseqnum;
+  void *receive_window;
+  uint32_t expectedseqnum;
+  int rw_size;
   int window_size;
-  int spare_bytes;
-  const void * write_waiting;
+  void * read_waiting;
+  int count;
 };
 
 class TCPAssignment : public HostModule,
@@ -103,6 +105,7 @@ public:
 
   Socket * getSocket (int pid, int fd);
   Packet createPacket (Socket *sock, const uint8_t flag);
+  Packet createPacket (Socket *sock, uint32_t seq, uint32_t ack, const void *buf, uint16_t length, uint8_t flag);
 
 protected:
   virtual void systemCallback(UUID syscallUUID, int pid,
