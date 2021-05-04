@@ -16,11 +16,12 @@
 #include <netinet/tcp.h>
 
 #include <E/E_TimerModule.hpp>
+#include <E/E_TimeUtil.hpp>
 
 #include <E/E_Common.hpp>
 
 #define MAX_SOCKETS 1 << 16
-#define MAX_PAYLOAD_SIZE 1460
+#define MAX_PAYLOAD_SIZE 1024
 
 namespace E {
 
@@ -86,6 +87,9 @@ struct Socket
   int window_size;
   void * read_waiting;
   int count;
+  UUID close;
+
+  UUID timer;
 };
 
 class TCPAssignment : public HostModule,
