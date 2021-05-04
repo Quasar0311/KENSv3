@@ -198,11 +198,13 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
           sock_con->read_waiting = nullptr;
           sock_con->rw_size = 0;
           Packet pkt = createPacket(sock_con, SYN | ACK);
+          sock->ret_timer = addTimer (std::pair <Socket *, Packet> (sock, pkt.clone()), SYN_TIMEOUT);
           sendPacket("IPv4", std::move(pkt));
           return;
         }
 
         if (flag == ACK) {
+          cancelTimer (sock->ret_timer);
           std::vector <Socket *>::iterator it;
           Socket *socket = nullptr;
           for (it = sock -> incomplete_queue.begin(); it != sock -> incomplete_queue.end(); it++) {
@@ -311,7 +313,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       {
         if (flag == (SYN | ACK))
         {
-          cancelTimer (sock->timer);
+          cancelTimer (sock->ret_timer);
           sock->seq = ack;
           sock->ack = seq + 1;
           Packet pkt = createPacket(sock, ACK);
@@ -372,6 +374,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
         // }
         if (flag == ACK)
         {
+          cancelTimer (sock->ret_timer);
           Socket *sock_con = sock->sock_con;
           int fd;
           if ((fd = createFileDescriptor (sock_con->pid)) == -1)
@@ -448,6 +451,7 @@ DATA:
             }
             else
             {
+              // Duplicate DATA, discard, ACK
               Packet pkt = createPacket (sock, sock->seq, sock->expectedseqnum, nullptr, 0, ACK);
               sendPacket ("IPv4", std::move(pkt)); 
               return;
@@ -467,41 +471,21 @@ DATA:
                 break;
               }
             }
+
+            if (i == sock->sn_base || i == sock->sn_nextseqnum + 1)
+            {
+              // Duplicate ACK
+              return;
+            }
+
+            // Timer restart
+            cancelTimer (sock->ret_timer);
+            sock->ret_timer = addTimer (std::pair <Socket *, Packet> (sock, Packet (0)), DATA_TIMEOUT);
             sock->sn_base = i;
             while (sock->sn_nextseqnum < (int) sock->packet_queue.size() && sock->sn_nextseqnum < sock->sn_base + sock->window_size)
             {
               sendPacket ("IPv4", std::move(sock->packet_queue[sock->sn_nextseqnum]));
               sock->sn_nextseqnum++;
-            }
-
-            if (sock->sn_base == sock->sn_nextseqnum)
-            {
-              Socket *sock_it, *s;
-              std::vector <Socket *>::iterator i;
-              for (i = socketList.begin(); i != socketList.end(); )
-              {
-                sock_it = *i;
-                if (sock_it->pid == sock->pid && sock_it->fd == sock->fd)
-                {
-                  s = sock;
-                  socketList.erase (i);
-                }
-                else
-                {
-                  i++;
-                }
-              }
-              i = std::find (listenList.begin(), listenList.end(), s);
-              if (i != listenList.end())
-              {
-                listenList.erase (i);
-              }
-              removeFileDescriptor (sock->pid, sock->fd);
-              returnSystemCall (sock->close, 1);
-              s->packet_queue = std::vector<Packet> ();
-              delete s->addr_in_src;
-              delete s->addr_in_dst;
-              delete s;
             }
             return;
           }        
@@ -638,6 +622,25 @@ bool TCPAssignment::isMatchingAddrDst (Socket *sock, uint32_t ip, uint16_t port)
 
 void TCPAssignment::timerCallback(std::any payload) {
   // Remove below
+  std::pair <Socket *, Packet> pair = std::any_cast <std::pair <Socket *, Packet>> (payload);
+  Socket * sock = pair.first;
+
+  if (sock->state != SS_CONNECTED)
+  {
+    sock->ret_timer = addTimer (std::pair <Socket *, Packet> (sock, pair.second.clone()), SYN_TIMEOUT);
+    sendPacket ("IPv4", std::move(pair.second));
+    return;
+  }
+  else
+  {
+    int i;
+    sock->ret_timer = addTimer (std::pair <Socket *, Packet> (sock, Packet (0)), DATA_TIMEOUT);
+    for (i = sock->sn_base; i < sock->sn_nextseqnum; i++)
+    {
+      sendPacket ("IPv4", std::move(sock->packet_queue[i].clone()));
+    }
+    return;
+  }
 }
 
 void TCPAssignment::syscall_socket (UUID syscallUUID, int pid,
@@ -951,6 +954,7 @@ void TCPAssignment::syscall_connect (UUID syscallUUID, int pid,
   sock->syscallUUID = syscallUUID;
   sock->state = SS_SYNSENT;
   // for syscallreturn (connect, ...)
+  sock->ret_timer = addTimer (std::pair<Socket *, Packet> (sock, pkt.clone()), SYN_TIMEOUT);
   sendPacket ("IPv4", std::move (pkt));
   return;
 }
@@ -1073,6 +1077,10 @@ void TCPAssignment::syscall_write (UUID syscallUUID, int pid,
   }
 
   auto i = sock->sn_base;
+  if (sock->sn_base == 0 && sock->sn_nextseqnum == 0)
+  {
+    sock->ret_timer = addTimer (std::pair <Socket *, Packet> (sock, Packet(0)), DATA_TIMEOUT);
+  }
   while (i < (int) sock->packet_queue.size() && i < sock->sn_base + sock->window_size)
   {
     if (i >= sock->sn_nextseqnum)

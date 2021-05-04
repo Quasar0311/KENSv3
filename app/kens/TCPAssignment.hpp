@@ -22,6 +22,8 @@
 
 #define MAX_SOCKETS 1 << 16
 #define MAX_PAYLOAD_SIZE 1024
+#define SYN_TIMEOUT 100 * 1000 * 1000
+#define DATA_TIMEOUT 10 * 1000 * 1000
 
 namespace E {
 
@@ -89,7 +91,7 @@ struct Socket
   int count;
   UUID close;
 
-  UUID timer;
+  UUID ret_timer;
 };
 
 class TCPAssignment : public HostModule,
