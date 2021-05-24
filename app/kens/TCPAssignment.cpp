@@ -430,7 +430,7 @@ DATA:
                   sock->read_waiting = nullptr;
                   returnSystemCall (sock->syscallUUID, size);
 
-                  memcpy (sock->receive_window + sock->rw_size, (char *)payload + size, ip_length - 40 - size);
+                  memcpy ((char *) sock->receive_window + sock->rw_size, (char *)payload + size, ip_length - 40 - size);
                   sock->rw_size += ip_length - 40 - size;
                   return;
                 }
