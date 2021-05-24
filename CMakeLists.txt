@@ -82,6 +82,20 @@ if(WIN32)
       CACHE BOOL "" FORCE)
 endif(WIN32)
 
+# Get Library: GTest
+
+include(FetchContent)
+
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/release-1.10.0.zip)
+
+FetchContent_GetProperties(googletest)
+if(NOT googletest_POPULATED)
+  FetchContent_Populate(googletest)
+  add_subdirectory(${googletest_SOURCE_DIR}/googletest ${googletest_BINARY_DIR})
+endif()
+
 # Find Solution
 function(get_solution_name TARGET)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" AND CMAKE_SYSTEM_NAME STREQUAL
@@ -89,12 +103,14 @@ function(get_solution_name TARGET)
     set(${TARGET}_SOLUTION_NAME
         "${TARGET}-universal-${CMAKE_SYSTEM_NAME}-${CMAKE_CXX_COMPILER_ID}.zip"
         PARENT_SCOPE)
-  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND CMAKE_SYSTEM_NAME STREQUAL
-                                                   "Windows")
+  elseif((CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" OR CMAKE_CXX_COMPILER_ID
+                                                   STREQUAL "Clang")
+         AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(${TARGET}_SOLUTION_NAME
         "${TARGET}-${CMAKE_SYSTEM_PROCESSOR}-${CMAKE_SYSTEM_NAME}-Clang.zip"
         PARENT_SCOPE)
-  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL
+                                                 "Clang")
     string(REPLACE "." ";" CMAKE_CXX_COMPILER_VERSION_LIST
                    "${CMAKE_CXX_COMPILER_VERSION}")
     list(GET CMAKE_CXX_COMPILER_VERSION_LIST 0 CMAKE_CXX_COMPILER_VERSION_MAJOR)
