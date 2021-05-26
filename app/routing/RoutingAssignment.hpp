@@ -10,6 +10,11 @@
 #include <E/Networking/E_Host.hpp>
 #include <E/Networking/E_Networking.hpp>
 #include <E/Networking/E_Port.hpp>
+#include <E/Networking/E_RoutingInfo.hpp>
+#include <netinet/in.h>
+
+#define RIP_PORT 520
+#define RIP_INF 16
 
 namespace E {
 
@@ -88,6 +93,11 @@ public:
     Size bps = this->getHost()->getPort(port_num)->getPortSpeed();
     return CostLCM / bps;
   }
+
+  std::map <uint32_t, std::pair <uint32_t, int>> routing_table;
+  int timer;
+  uint32_t lookupRoutingTable (uint32_t ip_addr);
+  Packet createPacket (int src_port, uint32_t dst_ip, rip_t* rip, int n);
 
   virtual void initialize();
   virtual void finalize();
