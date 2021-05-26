@@ -14,7 +14,7 @@
 #include <netinet/in.h>
 
 #define RIP_PORT 520
-#define RIP_INF 16
+#define RIP_INF 301
 
 namespace E {
 
@@ -94,10 +94,11 @@ public:
     return CostLCM / bps;
   }
 
-  std::map <uint32_t, std::pair <uint32_t, int>> routing_table;
+  std::map <uint32_t, std::pair <uint32_t, uint32_t>> routing_table;
   int timer;
   uint32_t lookupRoutingTable (uint32_t ip_addr);
   Packet createPacket (int src_port, uint32_t dst_ip, rip_t* rip, int n);
+  void printRoutingTable ();
 
   virtual void initialize();
   virtual void finalize();

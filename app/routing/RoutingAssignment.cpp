@@ -22,11 +22,19 @@ RoutingAssignment::RoutingAssignment(Host *host)
 
 RoutingAssignment::~RoutingAssignment() {}
 
+void RoutingAssignment::printRoutingTable ()
+{
+  for (auto& [ip_addr, metric_gateway] : routing_table)
+  {
+    std::cout << "{dest: " << ip_addr << ", metric: " << metric_gateway.first << ", gateway: " << metric_gateway.second << "}\n";
+  }
+}
+
 void RoutingAssignment::initialize() {
   int port_size = this->getHost()->getPortCount();
   for (int port_num = 0; port_num < port_size; port_num++)
   {
-    routing_table[NetworkUtil::arrayToUINT64<4> (this->getHost()->getIPAddr(port_num).value())] = {0, port_num};
+    routing_table[ntohl(NetworkUtil::arrayToUINT64<4> ( this->getHost()->getIPAddr(port_num).value()))] = {0, 0};
   }
   rip_t *rip = (rip_t *) malloc (sizeof (rip_header_t) +
                                   sizeof (rip_entry_t));
@@ -61,13 +69,14 @@ Size RoutingAssignment::ripQuery(const ipv4_t &ipv4) {
   uint32_t metric = lookupRoutingTable (ip_addr);
   if (metric < RIP_INF)
   {
-    return (Size) metric;
+    return metric;
   }
   return -1;
 }
 
 uint32_t RoutingAssignment::lookupRoutingTable(uint32_t ip_addr)
 {
+  ip_addr = ntohl (ip_addr);
   auto search = routing_table.find (ip_addr);
   if (search != routing_table.end())
   {
@@ -86,7 +95,7 @@ Packet RoutingAssignment::createPacket (int src_port, uint32_t dst_ip, rip_t *ri
   int offset = 14;
   
   // IP header
-  uint32_t src_ip = htonl ( NetworkUtil::arrayToUINT64<4> (this->getHost()->getIPAddr (src_port).value()));
+  uint32_t src_ip = NetworkUtil::arrayToUINT64<4> (this->getHost()->getIPAddr (src_port).value());
   dst_ip = htonl (dst_ip);
   pkt.writeData (offset + 12, &src_ip, 4);
   pkt.writeData (offset + 16, &dst_ip, 4);
@@ -136,7 +145,6 @@ Packet RoutingAssignment::createPacket (int src_port, uint32_t dst_ip, rip_t *ri
 
 void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   // Validate a packet
-  std::cout << fromModule << std::endl;
   int datagram_size, i;
   uint32_t src_ip, dst_ip;
   packet.readData (14 + 20 + 4, &datagram_size, 2);;
@@ -188,7 +196,7 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
         i++;
       }
       // Packet pkt = createPacket (this->getHost()->getRoutingTable (NetworkUtil::UINT64ToArray<4> (src_ip)), 0xffffffff, new_rip, n);
-      Packet pkt = createPacket (this->getHost()->getRoutingTable (NetworkUtil::UINT64ToArray<4> (src_ip)), 167772417, new_rip, n);
+      Packet pkt = createPacket (this->getHost()->getRoutingTable (NetworkUtil::UINT64ToArray<4> (src_ip)), src_ip, new_rip, n);
       sendPacket ("IPv4", std::move (pkt));
       return;
     }
@@ -215,37 +223,55 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
     {
       entry = rip->entries + i;
       // Check for neighborness
+      int port = this->getHost()->getRoutingTable (NetworkUtil::UINT64ToArray<4> (src_ip));
+      std::optional<ipv4_t> ip4 = this->getHost()->getIPAddr (port);
       // Check entry->ip_addr != my ip_addr
       if (entry->metric >= RIP_INF) continue;
       if (entry->address_family != 2) continue;
       // Check for ip_addr validity
-      int port = this->getHost()->getRoutingTable (NetworkUtil::UINT64ToArray<4> (entry->ip_addr));
-      uint32_t metric = std::min (metric + portCost (port), (unsigned long) RIP_INF);
+      uint32_t metric = std::min (entry->metric + portCost (port), (unsigned long) RIP_INF);
       
       if (routing_table.count(entry->ip_addr) <= 0)
       {
-        routing_table [entry->ip_addr] = {metric, port};
+        routing_table [entry->ip_addr] = {metric, src_ip};
         cancelTimer (timer);
-        timer = addTimer (this->getHost()->getIPAddr (port), (E::Time)30 * 1000 * 1000 * 1000);
-        // routing_table.insert ({_ip_addr, std::pair <uint32_t, int> (metric, port)});
+        timer = addTimer (NULL, (E::Time)30 * 1000 * 1000 * 1000);
         // timeout
         // route update
       }
       else
       {
-        if (routing_table[entry->ip_addr].second == port ||
-            metric < routing_table[entry->ip_addr].first)
+        if (metric < routing_table[entry->ip_addr].first )
+            // || (metric != routing_table[entry->ip_addr].first && routing_table[entry->ip_addr].second == src_ip))
         {
-          routing_table [entry->ip_addr] = {metric, port};
+          routing_table [entry->ip_addr] = {metric, src_ip};
           cancelTimer (timer);
           timer = addTimer (this->getHost()->getIPAddr (port), (E::Time)30 * 1000 * 1000 * 1000);
-          // routing_table.insert_or_assign ({_ip_addr, std::pair <uint32_t, int> (metric, port)});
           if (metric >= RIP_INF)
           {
             // TODO: deletion
           }
         }
+
+        // if (routing_table[entry->ip_addr].second == src_ip)
+        // {
+        //   if (routing_table[entry->ip_addr].first != metric)
+        //   {
+        //     routing_table[entry->ip_addr] = {metric, src_ip};
+        //    cancelTimer (timer);
+        //    timer = addTimer (this->getHost()->getIPAddr (port), (E::Time)30 * 1000 * 1000 * 1000);
+        //   }
+        // }
+        // else if (metric < routing_table[entry->ip_addr].first)
+        // {
+        //   routing_table[entry->ip_addr] = {metric, src_ip};
+        //    cancelTimer (timer);
+        //    timer = addTimer (this->getHost()->getIPAddr (port), (E::Time)30 * 1000 * 1000 * 1000);
+        // }
       }
+      // std::cout << "-------------------------\n";
+      // printRoutingTable();
+      // std::cout << "-------------------------\n";
     }
     return;
   }
